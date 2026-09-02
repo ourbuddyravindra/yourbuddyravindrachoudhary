@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#2563eb">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Your Buddy Ravindra Choudhary</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font-family:Arial,"Noto Sans Devanagari",sans-serif;background:#f5f7fb;color:#172033}
+header{background:linear-gradient(135deg,#172554,#2563eb);color:#fff;padding:28px 18px 38px;border-radius:0 0 28px 28px}
+.wrap{max-width:720px;margin:auto}.brand{font-size:14px;letter-spacing:1px;font-weight:700;opacity:.9}.hero h1{font-size:38px;line-height:1.1;margin:12px 0}.hero p{opacity:.9}
+.btn{display:inline-block;border:0;border-radius:12px;padding:12px 16px;text-decoration:none;font-weight:700;margin:5px 4px 0 0}.white{background:#fff;color:#1d4ed8}.blue{background:#2563eb;color:#fff}
+main{padding:22px 16px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:#fff;border:1px solid #e5e7eb;border-radius:18px;padding:20px;box-shadow:0 5px 18px #0000000b}.icon{font-size:30px}.card h3{margin:8px 0 4px}.card p{color:#64748b;font-size:14px;margin:0 0 12px}.card a{color:#2563eb;text-decoration:none;font-weight:700}
+.quiz{margin-top:18px;background:#172554;color:#fff;border-radius:20px;padding:22px}.quiz p{color:#dbeafe}.quiz button{width:100%;padding:13px;border:0;border-radius:10px;background:#fff;color:#172554;font-weight:700}
+footer{text-align:center;padding:25px;color:#64748b;font-size:13px}
+@media(max-width:480px){.grid{grid-template-columns:1fr 1fr}.hero h1{font-size:32px}}
+</style>
+</head>
+<body>
+<header><div class="wrap hero">
+<div class="brand">YOUR BUDDY RAVINDRA CHOUDHARY</div>
+<h1>आपकी तैयारी का अपना Digital Buddy 📚</h1>
+<p>सुजस ई-प्रश्नोत्तरी • Rajasthan GK • Daily Quiz • Study Material</p>
+<a class="btn white" href="https://youtube.com/@yourbuddyravindrachoudhary" target="_blank">▶️ YouTube</a>
+<a class="btn white" href="https://t.me/yourbuddyravindrachoudhary" target="_blank">📢 Telegram</a>
+</div></header>
+<main><div class="wrap">
+<div class="grid">
+<div class="card"><div class="icon">📚</div><h3>सुजस ई-प्रश्नोत्तरी</h3><p>महत्वपूर्ण प्रश्नों का संग्रह।</p><a href="#">Open →</a></div>
+<div class="card"><div class="icon">🎯</div><h3>Daily Quiz</h3><p>रोज अभ्यास करें।</p><a href="#quiz">Start →</a></div>
+<div class="card"><div class="icon">🏛️</div><h3>Rajasthan GK</h3><p>राजस्थान सामान्य ज्ञान।</p><a href="#">Explore →</a></div>
+<div class="card"><div class="icon">📥</div><h3>PDF Notes</h3><p>Study material और PDFs।</p><a href="#">Downloads →</a></div>
+</div>
+<div class="quiz" id="quiz">
+<h2>📝 Sample Quiz</h2>
+<p id="q">राजस्थान की राजधानी क्या है?</p>
+<button onclick="answer('जयपुर')">जयपुर</button>
+<button onclick="answer('जोधपुर')">जोधपुर</button>
+<p id="result"></p>
+</div>
+</div></main>
+<footer>© 2026 Your Buddy Ravindra Choudhary</footer>
+<script>
+function answer(x){document.getElementById('result').textContent=x==='जयपुर'?'✅ सही उत्तर!':'❌ सही उत्तर: जयपुर';}
+if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body></html>

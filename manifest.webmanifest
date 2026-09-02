@@ -1,0 +1,9 @@
+{
+  "name":"Your Buddy Ravindra Choudhary",
+  "short_name":"Your Buddy",
+  "start_url":"./index.html",
+  "display":"standalone",
+  "background_color":"#f5f7fb",
+  "theme_color":"#2563eb",
+  "icons":[]
+}
