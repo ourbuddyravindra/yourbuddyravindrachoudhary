@@ -1,0 +1,186 @@
+name: Rajasthan Sujas Auto Upload
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+      timezone: "Asia/Kolkata"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sujas:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+
+      - name: Install requests
+        run: pip install requests
+
+      - name: Check and upload latest Sujas
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          CHANNEL = "@yourbuddyravindrachoudhary"
+
+          API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+
+          payload = {
+              "AdmDepartmentCode": 0,
+              "AttachmentList": [],
+              "BeneficiaryCategory": 0,
+              "Date": "",
+              "DepartmentCode": 85,
+              "DeptSectionCode": 0,
+              "EntryFromDate": "",
+              "EntryToDate": "",
+              "FromDate": "",
+              "Id": 0,
+              "IndexModel": {
+                  "AdvanceSearchModel": {},
+                  "PageSize": 15,
+                  "IsPostBack": False,
+                  "OrderByAsc": 0,
+                  "Search": None,
+                  "OrderBy": None
+              },
+              "IndividualBeneficiaryScheme": "",
+              "IsImagesRequired": True,
+              "IsLatest": -1,
+              "IsNotJankalyan": -1,
+              "OrderNo": "",
+              "SchemeCode": 0,
+              "Search": "",
+              "SectorIds": 0,
+              "Status": 1,
+              "SubTypeCode": "2583",
+              "Title": "",
+              "ToDate": "",
+              "Type": "10"
+          }
+
+          r = requests.post(API, json=payload, timeout=60)
+          r.raise_for_status()
+
+          data = r.json()
+
+          # API response structure के अनुसार latest item निकालना
+          items = data.get("Data") or data.get("data") or data
+
+          if isinstance(items, dict):
+              items = items.get("Data") or items.get("data") or []
+
+          if not items:
+              raise Exception("Sujas data नहीं मिला")
+
+          latest = items[0]
+
+          title = latest.get("Title") or latest.get("title") or "Latest Sujas"
+          order_id = str(
+              latest.get("Id")
+              or latest.get("ID")
+              or latest.get("OrderId")
+              or latest.get("orderId")
+              or ""
+          )
+
+          print("Latest:", title)
+          print("ID:", order_id)
+
+          if not order_id:
+              raise Exception("Latest Sujas ID नहीं मिला")
+
+          state_file = "latest_sujas_id.txt"
+
+          old_id = ""
+          if os.path.exists(state_file):
+              old_id = open(state_file, encoding="utf-8").read().strip()
+
+          if old_id == order_id:
+              print("नया Sujas नहीं आया.")
+              raise SystemExit(0)
+
+          # AttachmentList से PDF ढूँढना
+          attachments = (
+              latest.get("AttachmentList")
+              or latest.get("attachmentList")
+              or []
+          )
+
+          pdf_url = None
+
+          for att in attachments:
+              if isinstance(att, dict):
+                  for value in att.values():
+                      if isinstance(value, str) and ".pdf" in value.lower():
+                          pdf_url = value
+                          break
+              if pdf_url:
+                  break
+
+          if not pdf_url:
+              raise Exception("PDF URL नहीं मिला")
+
+          print("PDF:", pdf_url)
+
+          pdf = requests.get(pdf_url, timeout=120)
+          pdf.raise_for_status()
+
+          with open("sujas.pdf", "wb") as f:
+              f.write(pdf.content)
+
+          print("PDF downloaded:", len(pdf.content), "bytes")
+
+          telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+
+          with open("sujas.pdf", "rb") as f:
+              response = requests.post(
+                  telegram_url,
+                  data={
+                      "chat_id": CHANNEL,
+                      "caption": f"📚 {title}"
+                  },
+                  files={
+                      "document": ("sujas.pdf", f, "application/pdf")
+                  },
+                  timeout=180
+              )
+
+          response.raise_for_status()
+
+          result = response.json()
+
+          if not result.get("ok"):
+              raise Exception(result)
+
+          print("✅ Sujas successfully Channel पर भेज दिया!")
+
+          with open(state_file, "w", encoding="utf-8") as f:
+              f.write(order_id)
+
+          PY
+
+      - name: Save latest Sujas ID
+        run: |
+          if git diff --quiet latest_sujas_id.txt; then
+            echo "No new ID to save."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add latest_sujas_id.txt
+            git commit -m "Update latest Sujas ID"
+            git push
+          fi
