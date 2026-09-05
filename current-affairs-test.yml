@@ -1,33 +1,351 @@
-name: Current Affairs Bot Test
+name: Current Affairs - Fact Extraction
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-  test:
+  extract-facts:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send test message
-        env:
-          BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install OCR tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            poppler-utils \
+            tesseract-ocr \
+            tesseract-ocr-hin \
+            tesseract-ocr-eng
+
+      - name: Install Python packages
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-genai requests pillow
+
+      - name: Download latest Sujas
         run: |
           python - <<'PY'
-          import os
           import requests
+          import json
+          import sys
 
-          token = os.environ["BOT_TOKEN"]
+          API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
-          url = f"https://api.telegram.org/bot{token}/sendMessage"
-
-          data = {
-              "chat_id": "@yourbuddyravindrachoudhary",
-              "text": "🤖 Current Affairs Bot\n\n✅ Bot successfully connected!\n\nअब Daily Current Affairs system बनाने के लिए तैयार है।"
+          payload = {
+              "AdmDepartmentCode": 0,
+              "AttachmentList": [],
+              "BeneficiaryCategory": 0,
+              "Date": "",
+              "DepartmentCode": 85,
+              "DeptSectionCode": 0,
+              "EntryFromDate": "",
+              "EntryToDate": "",
+              "FromDate": "",
+              "Id": 0,
+              "IndexModel": {
+                  "AdvanceSearchModel": {},
+                  "PageSize": 15,
+                  "IsPostBack": False,
+                  "OrderByAsc": 0,
+                  "Search": None,
+                  "OrderBy": None
+              },
+              "IndividualBeneficiaryScheme": "",
+              "IsImagesRequired": True,
+              "IsLatest": -1,
+              "IsNotJankalyan": -1,
+              "OrderNo": "",
+              "SchemeCode": 0,
+              "Search": "",
+              "SectorIds": 0,
+              "Status": 1,
+              "SubTypeCode": "2583",
+              "Title": "",
+              "ToDate": "",
+              "Type": "10"
           }
 
-          response = requests.post(url, data=data, timeout=30)
-          print(response.text)
+          response = requests.post(
+              API,
+              json=payload,
+              timeout=60
+          )
 
-          if not response.ok:
-              raise SystemExit("Telegram message failed")
+          response.raise_for_status()
+
+          data = response.json()
+
+          print("API response received")
+
+          # API में records आमतौर पर Data में आते हैं
+          if isinstance(data, dict):
+              records = (
+                  data.get("Data")
+                  or data.get("data")
+                  or data.get("Result")
+                  or data.get("result")
+                  or []
+              )
+          else:
+              records = data
+
+          if not isinstance(records, list):
+              records = []
+
+          print("Records found:", len(records))
+
+          # सबसे नया Sujas record
+          sujas = None
+
+          for item in records:
+
+              if not isinstance(item, dict):
+                  continue
+
+              title = str(item.get("Title") or "")
+
+              if "सुजस" in title:
+
+                  attachments = item.get(
+                      "AttachmentList"
+                  ) or []
+
+                  if not attachments:
+                      continue
+
+                  attachment = attachments[0]
+
+                  pdf_url = (
+                      attachment.get("Path")
+                      or attachment.get("path")
+                  )
+
+                  if not pdf_url:
+                      continue
+
+                  sujas = {
+                      "id": item.get("Id"),
+                      "title": title,
+                      "date": item.get("Date"),
+                      "pdf_url": pdf_url,
+                      "attachment_name":
+                          attachment.get("AttachmentsName")
+                  }
+
+                  break
+
+          if not sujas:
+              print("Sujas PDF not found")
+              sys.exit(1)
+
+          pdf_url = sujas["pdf_url"]
+
+          # कभी-कभी API Path markdown-link के रूप में आता है
+          if pdf_url.startswith("[") and "](" in pdf_url:
+              pdf_url = pdf_url.split("](", 1)[1]
+              pdf_url = pdf_url.rstrip(")")
+
+          sujas["pdf_url"] = pdf_url
+
+          print("Selected Sujas:")
+          print(json.dumps(
+              sujas,
+              ensure_ascii=False,
+              indent=2
+          ))
+
+          # Download PDF
+          pdf_response = requests.get(
+              pdf_url,
+              timeout=120
+          )
+
+          pdf_response.raise_for_status()
+
+          content = pdf_response.content
+
+          if not content.startswith(b"%PDF"):
+              print(
+                  "ERROR: downloaded file is not a PDF"
+              )
+              print(
+                  content[:200]
+              )
+              sys.exit(1)
+
+          with open(
+              "sujas_today.pdf",
+              "wb"
+          ) as f:
+              f.write(content)
+
+          with open(
+              "sujas_metadata.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  sujas,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          print(
+              "PDF downloaded:",
+              len(content),
+              "bytes"
+          )
           PY
+
+      - name: Convert PDF to images
+        run: |
+          mkdir -p pages
+
+          pdftoppm \
+            -jpeg \
+            -r 250 \
+            -jpegopt quality=95 \
+            sujas_today.pdf \
+            pages/page
+
+          echo "Generated pages:"
+          ls -lh pages/
+
+      - name: OCR pages
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          images = sorted(
+              Path("pages").glob("page-*.jpg")
+          )
+
+          pages = []
+
+          for image in images:
+
+              try:
+                  page_number = int(
+                      image.stem.split("-")[-1]
+                  )
+              except Exception:
+                  continue
+
+              print(
+                  f"OCR page {page_number}..."
+              )
+
+              result = subprocess.run(
+                  [
+                      "tesseract",
+                      str(image),
+                      "stdout",
+                      "-l",
+                      "hin+eng",
+                      "--psm",
+                      "3"
+                  ],
+                  capture_output=True,
+                  text=True,
+                  encoding="utf-8",
+                  errors="replace"
+              )
+
+              text = result.stdout.strip()
+
+              pages.append({
+                  "page": page_number,
+                  "text": text
+              })
+
+              print(
+                  f"Page {page_number}: "
+                  f"{len(text)} characters"
+              )
+
+          with open(
+              "ocr_pages.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  pages,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          print(
+              f"Created ocr_pages.json "
+              f"with {len(pages)} pages"
+          )
+          PY
+
+      - name: Extract verified facts
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: gemini-3.5-flash-lite
+        run: |
+          python extract_facts.py
+
+      - name: Show verified facts
+        run: |
+          python - <<'PY'
+          import json
+
+          with open(
+              "verified_facts.json",
+              "r",
+              encoding="utf-8"
+          ) as f:
+              data = json.load(f)
+
+          print()
+          print("=" * 60)
+          print(
+              "TOTAL VERIFIED FACTS:",
+              data.get("facts_count", 0)
+          )
+          print("=" * 60)
+
+          for i, fact in enumerate(
+              data.get("facts", []),
+              1
+          ):
+              print()
+              print(f"{i}. {fact['fact']}")
+              print(
+                  f"   Category : {fact['category']}"
+              )
+              print(
+                  f"   Page     : {fact['page']}"
+              )
+              print(
+                  f"   Evidence : {fact['evidence']}"
+              )
+          PY
+
+      - name: Upload extraction results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sujas-fact-extraction
+          path: |
+            sujas_today.pdf
+            sujas_metadata.json
+            ocr_pages.json
+            verified_facts.json
