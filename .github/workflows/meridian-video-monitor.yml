@@ -3,6 +3,7 @@ name: Meridian Rajasthan Video Monitor
 on:
   schedule:
     - cron: '7,37 * * * *'
+      timezone: "Asia/Kolkata"
   workflow_dispatch:
 
 permissions:
@@ -33,8 +34,8 @@ jobs:
           KEY = os.environ["YOUTUBE_API_KEY"]
           STATE_FILE = Path("meridian_latest_video.txt")
 
-          # Get Meridian Academy channel
-          r = requests.get(
+          # 1. Get Meridian Academy channel
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/channels",
               params={
                   "part": "contentDetails",
@@ -43,9 +44,9 @@ jobs:
               },
               timeout=20
           )
-          r.raise_for_status()
+          response.raise_for_status()
 
-          data = r.json()
+          data = response.json()
 
           if not data.get("items"):
               raise SystemExit("❌ Meridian Academy channel नहीं मिला")
@@ -54,8 +55,8 @@ jobs:
               "relatedPlaylists"
           ]["uploads"]
 
-          # Get latest uploads
-          r = requests.get(
+          # 2. Get latest uploads
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/playlistItems",
               params={
                   "part": "snippet,contentDetails",
@@ -65,11 +66,11 @@ jobs:
               },
               timeout=20
           )
-          r.raise_for_status()
+          response.raise_for_status()
 
-          items = r.json().get("items", [])
+          items = response.json().get("items", [])
 
-          # Find latest Rajasthan Current Affairs / SUJAS video
+          # 3. Find latest Rajasthan Current Affairs / SUJAS video
           selected = None
 
           for item in items:
@@ -98,6 +99,7 @@ jobs:
               selected["snippet"]["publishedAt"]
           )
 
+          # 4. Read saved video ID
           old_id = ""
 
           if STATE_FILE.exists():
@@ -114,10 +116,13 @@ jobs:
           print("PUBLISHED:", published)
           print("========================================")
 
+          # 5. Duplicate protection
           if old_id == video_id:
+              print()
               print("⏭️ SAME VIDEO — NOTHING TO DO")
 
           else:
+              print()
               print("🆕 NEW RAJASTHAN VIDEO FOUND")
               print("Saving new video ID...")
 
@@ -126,14 +131,16 @@ jobs:
                   encoding="utf-8"
               )
 
-              print("✅ New video ID saved")
+              print("✅ New video state saved")
 
           print()
           print("VIDEO URL:")
           print(f"https://www.youtube.com/watch?v={video_id}")
+          print("========================================")
           PY
 
-      - name: Commit new video state
+      # 6. Commit state only if changed
+      - name: Save video state
         run: |
           git add meridian_latest_video.txt
 
