@@ -25,7 +25,7 @@ jobs:
         run: |
           pip install requests beautifulsoup4
 
-      - name: Collect Official Rajasthan Sources
+      - name: Collect Rajasthan Official Sources
         shell: python
         run: |
           import requests
@@ -35,7 +35,7 @@ jobs:
           from urllib.parse import urljoin
 
           print("=" * 70)
-          print("RAJASTHAN CURRENT AFFAIRS COLLECTOR v2")
+          print("RAJASTHAN CURRENT AFFAIRS COLLECTOR")
           print("Today:", datetime.now(ZoneInfo("Asia/Kolkata")).date())
           print("=" * 70)
 
@@ -49,26 +49,30 @@ jobs:
                   kwargs.setdefault("timeout", (5, 10))
 
                   if method == "post":
-                      r = session.post(url, **kwargs)
+                      response = session.post(url, **kwargs)
                   else:
-                      r = session.get(url, **kwargs)
+                      response = session.get(url, **kwargs)
 
-                  print(f"Status: {r.status_code} | {url}")
-                  return r
+                  print(f"Status: {response.status_code} | {url}")
+                  return response
 
               except Exception as e:
-                  print("ERROR:", url)
+                  print(f"ERROR: {url}")
                   print("      ", e)
                   return None
 
+
           # ============================================================
-          # DIPR
+          # 1. DIPR
           # ============================================================
 
           print("\n📰 DIPR — RAJASTHAN")
           print("-" * 70)
 
-          dipr_url = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+          dipr_url = (
+              "https://dipr.rajasthan.gov.in/"
+              "webapi/api/OrderPortal/GetAll"
+          )
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -104,16 +108,18 @@ jobs:
               "Type": "10"
           }
 
-          r = fetch(
+          response = fetch(
               dipr_url,
               method="post",
               json=payload,
-              headers={"Content-Type": "application/json"}
+              headers={
+                  "Content-Type": "application/json"
+              }
           )
 
-          if r:
+          if response:
               try:
-                  data = r.json()
+                  data = response.json()
 
                   def find_records(obj):
                       if isinstance(obj, list):
@@ -121,11 +127,15 @@ jobs:
                               yield from find_records(item)
 
                       elif isinstance(obj, dict):
-                          keys = {str(k).lower() for k in obj}
+                          keys = {
+                              str(k).lower()
+                              for k in obj.keys()
+                          }
 
                           if (
                               ("title" in keys or "name" in keys)
-                              and ("id" in keys or "orderid" in keys)
+                              and
+                              ("id" in keys or "orderid" in keys)
                           ):
                               yield obj
 
@@ -138,6 +148,7 @@ jobs:
                   clean = []
 
                   for item in records:
+
                       title = str(
                           item.get("Title")
                           or item.get("title")
@@ -146,7 +157,7 @@ jobs:
                           or ""
                       ).strip()
 
-                      rid = str(
+                      record_id = str(
                           item.get("Id")
                           or item.get("ID")
                           or item.get("id")
@@ -165,215 +176,206 @@ jobs:
                       if not title:
                           continue
 
-                      key = (title, rid, date)
+                      key = (
+                          title,
+                          record_id,
+                          date
+                      )
 
                       if key not in seen:
                           seen.add(key)
-                          clean.append((title, date, rid))
+                          clean.append(
+                              (title, date, record_id)
+                          )
 
-                  print("DIPR records found:", len(clean))
+                  print(
+                      "DIPR records found:",
+                      len(clean)
+                  )
 
-                  for title, date, rid in clean[:20]:
+                  for title, date, record_id in clean[:20]:
                       print(f"\n📌 {title}")
                       print(f"📅 {date}")
-                      print(f"📦 ID: {rid}")
+                      print(f"📦 ID: {record_id}")
 
               except Exception as e:
                   print("DIPR ERROR:", e)
 
+
           # ============================================================
-          # FINANCE — LATEST NEWS ONLY
+          # 2. FINANCE
           # ============================================================
 
           print("\n💰 FINANCE DEPARTMENT")
           print("-" * 70)
 
-          finance_url = "https://finance.rajasthan.gov.in/"
+          finance_url = (
+              "https://finance.rajasthan.gov.in/"
+          )
 
-          r = fetch(finance_url)
+          response = fetch(finance_url)
 
-          if r:
-              soup = BeautifulSoup(r.text, "html.parser")
+          if response:
+              soup = BeautifulSoup(
+                  response.text,
+                  "html.parser"
+              )
 
-              results = []
+              finance_results = []
               seen = set()
 
-              # Look specifically for news-like containers
-              for element in soup.find_all(
-                  ["div", "section", "table", "ul", "ol"]
+              # Look for links associated with recent news.
+              # Avoid permanent reference/document sections.
+
+              bad_terms = [
+                  "budget manual",
+                  "budget object codes",
+                  "rajasthan service rules",
+                  "rsr rules",
+                  "treasury rules",
+                  "hra rules",
+                  "provident fund",
+                  "excise act",
+                  "transparency in public procurement",
+                  "pay scales",
+                  "pension rules",
+                  "travelling allowance",
+                  "general provident",
+                  "skip to main content"
+              ]
+
+              good_terms = [
+                  "amendment",
+                  "cag report",
+                  "report",
+                  "guideline",
+                  "notification",
+                  "order",
+                  "rips",
+                  "holiday",
+                  "rule"
+              ]
+
+              for a in soup.find_all(
+                  "a",
+                  href=True
               ):
 
-                  text = " ".join(
-                      element.get_text(" ", strip=True).split()
+                  title = " ".join(
+                      a.get_text(
+                          " ",
+                          strip=True
+                      ).split()
                   )
 
-                  if not text:
+                  if not title:
                       continue
 
-                  low = text.lower()
+                  href = urljoin(
+                      finance_url,
+                      a["href"]
+                  )
 
-                  if not any(k in low for k in [
-                      "latest news",
-                      "latestnews",
-                      "news",
-                      "amendment",
-                      "cag report"
-                  ]):
+                  low = title.lower()
+
+                  if href.lower().startswith(
+                      "javascript:"
+                  ):
                       continue
 
-                  for a in element.find_all("a", href=True):
+                  if any(
+                      term in low
+                      for term in bad_terms
+                  ):
+                      continue
 
-                      title = " ".join(
-                          a.get_text(" ", strip=True).split()
+                  if not any(
+                      term in low
+                      for term in good_terms
+                  ):
+                      continue
+
+                  key = (
+                      title,
+                      href
+                  )
+
+                  if key not in seen:
+                      seen.add(key)
+                      finance_results.append(
+                          (title, href)
                       )
 
-                      href = urljoin(
-                          finance_url,
-                          a["href"]
-                      )
+              print(
+                  "Finance candidates:",
+                  len(finance_results)
+              )
 
-                      if not title:
-                          continue
-
-                      if href.lower().startswith("javascript:"):
-                          continue
-
-                      bad = [
-                          "budget manual",
-                          "rsr rules",
-                          "treasury rules",
-                          "hra rules",
-                          "provident fund",
-                          "excise act",
-                          "transparency in public procurement",
-                          "pay scales"
-                      ]
-
-                      if any(x in title.lower() for x in bad):
-                          continue
-
-                      key = (title, href)
-
-                      if key not in seen:
-                          seen.add(key)
-                          results.append((title, href))
-
-              print("Finance latest candidates:", len(results))
-
-              for title, href in results[:15]:
+              for title, href in finance_results[:15]:
                   print(f"\n📌 {title}")
-                  print("🔗", href)
+                  print(f"🔗 {href}")
+
 
           # ============================================================
-          # RSSC — SPORTS EVENTS
+          # 3. RSSC SPORTS
           # ============================================================
 
           print("\n🏆 SPORTS — RSSC")
           print("-" * 70)
 
           rssc_url = (
-              "https://rssc.rajasthan.gov.in/content/raj/"
-              "sports/rajasthan-state-sports-council/en/home.html"
+              "https://rssc.rajasthan.gov.in/"
+              "content/raj/sports/"
+              "rajasthan-state-sports-council/"
+              "en/home.html"
           )
 
-          r = fetch(rssc_url)
+          response = fetch(rssc_url)
 
-          if r:
-              soup = BeautifulSoup(r.text, "html.parser")
-
-              sports = []
-              seen = set()
-
-              # Find heading/element containing Sports Events
-              anchors = soup.find_all("a", href=True)
-
-              for a in anchors:
-
-                  title = " ".join(
-                      a.get_text(" ", strip=True).split()
-                  )
-
-                  if not title:
-                      continue
-
-                  low = title.lower()
-
-                  if any(k in low for k in [
-                      "championship",
-                      "league",
-                      "tournament",
-                      "sports event",
-                      "ranking",
-                      "hockey",
-                      "football",
-                      "cricket",
-                      "badminton",
-                      "athletics",
-                      "probables",
-                      "seminar"
-                  ]):
-
-                      href = urljoin(
-                          rssc_url,
-                          a["href"]
-                      )
-
-                      key = (title, href)
-
-                      if key not in seen:
-                          seen.add(key)
-                          sports.append((title, href))
-
-              print("Sports event candidates:", len(sports))
-
-              for title, href in sports[:25]:
-                  print(f"\n📌 {title}")
-                  print("🔗", href)
-
-          # ============================================================
-          # RECRUITMENT — CURRENT JOB OPENINGS
-          # ============================================================
-
-          print("\n👥 RECRUITMENT — RAJASTHAN")
-          print("-" * 70)
-
-          recruitment_url = "https://recruitment.rajasthan.gov.in/"
-
-          r = fetch(recruitment_url)
-
-          if r:
-              soup = BeautifulSoup(r.text, "html.parser")
-
-              jobs = []
-              seen = set()
-
-              # Target the section containing Job Openings & Vacancies
-              target = None
-
-              for element in soup.find_all(
-                  ["div", "section", "h1", "h2", "h3", "h4"]
-              ):
-
-                  text = " ".join(
-                      element.get_text(" ", strip=True).split()
-                  ).lower()
-
-                  if "job openings & vacancies" in text:
-                      target = element
-                      break
-
-              # If exact section isn't isolated, scan links but use
-              # strict recruitment-title filtering.
-              links = (
-                  target.find_all("a", href=True)
-                  if target
-                  else soup.find_all("a", href=True)
+          if response:
+              soup = BeautifulSoup(
+                  response.text,
+                  "html.parser"
               )
 
-              for a in links:
+              sports_results = []
+              seen = set()
+
+              # Sports event terminology.
+              event_terms = [
+                  "championship",
+                  "league",
+                  "tournament",
+                  "ranking",
+                  "hockey",
+                  "football",
+                  "cricket",
+                  "badminton",
+                  "athletics",
+                  "sports event",
+                  "probables",
+                  "seminar"
+              ]
+
+              # Remove permanent infrastructure/navigation pages.
+              bad_terms = [
+                  "district sports office",
+                  "district sports centre",
+                  "state sports centre",
+                  "sports centres",
+                  "sports centre"
+              ]
+
+              for a in soup.find_all(
+                  "a",
+                  href=True
+              ):
 
                   title = " ".join(
-                      a.get_text(" ", strip=True).split()
+                      a.get_text(
+                          " ",
+                          strip=True
+                      ).split()
                   )
 
                   if not title:
@@ -381,57 +383,179 @@ jobs:
 
                   low = title.lower()
 
-                  bad = [
-                      "faq",
-                      "frequently asked",
-                      "help",
-                      "login",
-                      "register",
-                      "home",
-                      "contact",
-                      "click here",
-                      "one time registration",
-                      "notice board"
-                  ]
-
-                  if any(x in low for x in bad):
+                  if not any(
+                      term in low
+                      for term in event_terms
+                  ):
                       continue
 
-                  good = [
-                      "recruitment",
-                      "jen",
-                      "safai karamchari",
-                      "teacher",
-                      "lecturer",
-                      "scientific officer",
-                      "medical teacher",
-                      "set",
-                      "vacancy",
-                      "job"
-                  ]
-
-                  if not any(x in low for x in good):
+                  if any(
+                      term in low
+                      for term in bad_terms
+                  ):
                       continue
 
                   href = urljoin(
-                      recruitment_url,
+                      rssc_url,
                       a["href"]
                   )
 
-                  if href.lower().startswith("javascript:"):
-                      continue
-
-                  key = (title, href)
+                  key = (
+                      title,
+                      href
+                  )
 
                   if key not in seen:
                       seen.add(key)
-                      jobs.append((title, href))
+                      sports_results.append(
+                          (title, href)
+                      )
 
-              print("Recruitment candidates:", len(jobs))
+              print(
+                  "Sports event candidates:",
+                  len(sports_results)
+              )
 
-              for title, href in jobs[:20]:
+              for title, href in sports_results[:25]:
                   print(f"\n📌 {title}")
-                  print("🔗", href)
+                  print(f"🔗 {href}")
+
+
+          # ============================================================
+          # 4. DST — SCIENCE & TECHNOLOGY
+          # ============================================================
+
+          print("\n🔬 SCIENCE & TECHNOLOGY — DST")
+          print("-" * 70)
+
+          dst_url = (
+              "https://dst.rajasthan.gov.in/news.aspx"
+          )
+
+          response = fetch(dst_url)
+
+          if response:
+              soup = BeautifulSoup(
+                  response.text,
+                  "html.parser"
+              )
+
+              dst_results = []
+              seen = set()
+
+              bad_terms = [
+                  "corrigendum",
+                  "tender",
+                  "auction",
+                  "quotation",
+                  "bid document",
+                  "नीलामी",
+                  "निविदा",
+                  "अनुपयोगी",
+                  "नकारा सामग्री"
+              ]
+
+              science_terms = [
+                  "science",
+                  "technology",
+                  "innovation",
+                  "innovator",
+                  "research",
+                  "scientific",
+                  "science club",
+                  "karya",
+                  "विज्ञान",
+                  "प्रौद्योगिकी",
+                  "नवाचार",
+                  "अनुसंधान"
+              ]
+
+              for table in soup.find_all(
+                  "table"
+              ):
+
+                  for row in table.find_all(
+                      "tr"
+                  ):
+
+                      cells = row.find_all(
+                          ["td", "th"]
+                      )
+
+                      if not cells:
+                          continue
+
+                      values = []
+
+                      for cell in cells:
+                          value = " ".join(
+                              cell.get_text(
+                                  " ",
+                                  strip=True
+                              ).split()
+                          )
+
+                          if value:
+                              values.append(value)
+
+                      if not values:
+                          continue
+
+                      row_text = " | ".join(
+                          values
+                      )
+
+                      low = row_text.lower()
+
+                      if any(
+                          term in low
+                          for term in bad_terms
+                      ):
+                          continue
+
+                      # Keep science/technology/innovation
+                      # related entries.
+                      if not any(
+                          term in low
+                          for term in science_terms
+                      ):
+                          continue
+
+                      href = ""
+
+                      link = row.find(
+                          "a",
+                          href=True
+                      )
+
+                      if link:
+                          href = urljoin(
+                              dst_url,
+                              link["href"]
+                          )
+
+                      key = (
+                          row_text,
+                          href
+                      )
+
+                      if key not in seen:
+                          seen.add(key)
+                          dst_results.append(
+                              (row_text, href)
+                          )
+
+              print(
+                  "DST candidates:",
+                  len(dst_results)
+              )
+
+              for title, href in dst_results[:20]:
+                  print(f"\n📌 {title}")
+
+                  if href:
+                      print(f"🔗 {href}")
+
 
           # ============================================================
           # FINISHED
