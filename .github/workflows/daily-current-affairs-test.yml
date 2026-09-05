@@ -1,4 +1,4 @@
-name: Daily Current Affairs Test
+name: Daily Current Affairs Search Test
 
 on:
   workflow_dispatch:
@@ -12,14 +12,14 @@ jobs:
         run: |
           pip install -U google-genai
 
-      - name: Generate Current Affairs
+      - name: Google Search Test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           from google import genai
+          from google.genai import types
           import os
-          import time
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
@@ -31,113 +31,44 @@ jobs:
               api_key=os.environ["GEMINI_API_KEY"]
           )
 
+          grounding_tool = types.Tool(
+              google_search=types.GoogleSearch()
+          )
+
+          config = types.GenerateContentConfig(
+              tools=[grounding_tool]
+          )
+
           prompt = f"""
           आज की तारीख {today} है।
 
-          राजस्थान प्रतियोगी परीक्षाओं के लिए CURRENT AFFAIRS तैयार करो।
+          Google Search का उपयोग करके केवल आज या
+          पिछले 24 घंटे की महत्वपूर्ण खबरें खोजो।
 
-          केवल दो categories रखो:
+          केवल:
+          1. राजस्थान से संबंधित महत्वपूर्ण खबरें
+          2. विज्ञान एवं प्रौद्योगिकी की महत्वपूर्ण खबरें
 
-          🏜️ राजस्थान करेंट अफेयर्स
-          💻 विज्ञान एवं प्रौद्योगिकी
+          सामान्य India politics/news मत दो।
+          पुरानी खबर को current affair मत बनाओ।
 
-          STRICT RULES:
+          हर खबर के साथ:
+          - शीर्षक
+          - मुख्य तथ्य
+          - स्रोत
+          - स्रोत तारीख
 
-          1. केवल हाल की और परीक्षा-उपयोगी घटनाएँ शामिल करो।
-          2. राजस्थान category की खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
-          3. Technology में AI, Space, ISRO, Digital Technology,
-             Cyber, Science और महत्वपूर्ण technological developments
-             शामिल किए जा सकते हैं।
-          4. सामान्य India politics/news शामिल मत करो।
-          5. Entertainment, celebrity और सामान्य मौसम शामिल मत करो।
-          6. कमजोर या filler खबरें मत जोड़ो।
-          7. कोई fact invent मत करो।
-          8. प्रत्येक खबर के साथ source और source date दो।
-          9. Hindi में concise और exam-oriented भाषा रखो।
-          10. महत्वपूर्ण facts के बाद MCQs बनाओ।
-          11. MCQ का सही उत्तर स्पष्ट रूप से बताओ।
-          12. पुरानी खबर को आज की current affair के रूप में प्रस्तुत मत करो।
-
-          OUTPUT FORMAT:
-
-          📅 करेंट अफेयर्स — {today}
-
-          🏜️ राजस्थान करेंट अफेयर्स
-
-          1. शीर्षक
-          • मुख्य तथ्य:
-          • परीक्षा उपयोगी तथ्य:
-          • स्रोत:
-          • स्रोत तारीख:
-
-          💻 विज्ञान एवं प्रौद्योगिकी
-
-          1. शीर्षक
-          • मुख्य तथ्य:
-          • परीक्षा उपयोगी तथ्य:
-          • स्रोत:
-          • स्रोत तारीख:
-
-          📝 महत्वपूर्ण MCQs
-
-          Q1. प्रश्न?
-          A. विकल्प
-          B. विकल्प
-          C. विकल्प
-          D. विकल्प
-
-          उत्तर: B
-
-          केवल verified और genuinely important information दो।
+          केवल verified information दो।
           """
 
-          models = [
-              "gemini-3.5-flash",
-              "gemini-3.6-flash",
-              "gemini-3.7-flash"
-          ]
-
-          for model in models:
-              print(f"Trying model: {model}")
-
-              for attempt in range(3):
-                  try:
-                      print(f"Attempt: {attempt + 1}")
-
-                      response = client.models.generate_content(
-                          model=model,
-                          contents=prompt
-                      )
-
-                      print("")
-                      print("==============================")
-                      print(f"📅 करेंट अफेयर्स — {today}")
-                      print(f"🤖 Model: {model}")
-                      print("==============================")
-                      print("")
-                      print(response.text)
-
-                      raise SystemExit(0)
-
-                  except SystemExit:
-                      raise
-
-                  except Exception as e:
-                      print(
-                          f"Error: {type(e).__name__}: {e}"
-                      )
-
-                      if attempt < 2:
-                          wait_time = 15 * (attempt + 1)
-                          print(
-                              f"Retrying after {wait_time} seconds..."
-                          )
-                          time.sleep(wait_time)
-
-              print(f"Model failed: {model}")
-              print("Trying next model...")
-
-          raise RuntimeError(
-              "All Gemini models failed after retries."
+          response = client.models.generate_content(
+              model="gemini-3.5-flash",
+              contents=prompt,
+              config=config
           )
+
+          print("==============================")
+          print(f"📅 {today}")
+          print("==============================")
+          print(response.text)
           PY
