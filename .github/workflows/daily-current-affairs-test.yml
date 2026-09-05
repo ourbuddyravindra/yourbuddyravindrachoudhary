@@ -1,22 +1,21 @@
-name: Meridian New Video Detector
+name: Meridian Rajasthan Video Detector
 
 on:
   workflow_dispatch:
 
 jobs:
-  detect-video:
+  detect-rajasthan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Detect latest Meridian video
+      - name: Find latest Rajasthan Current Affairs video
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
-          from datetime import datetime, timezone
 
           KEY = os.environ["YOUTUBE_API_KEY"]
 
@@ -41,7 +40,7 @@ jobs:
               params={
                   "part": "snippet,contentDetails",
                   "playlistId": uploads,
-                  "maxResults": 5,
+                  "maxResults": 10,
                   "key": KEY
               },
               timeout=20
@@ -50,31 +49,38 @@ jobs:
 
           items = r.json().get("items", [])
 
-          print("Meridian Academy latest videos:")
-          print()
+          # Rajasthan Current Affairs / SUJAS video खोजें
+          selected = None
 
           for item in items:
-              video_id = item["contentDetails"]["videoId"]
               title = item["snippet"]["title"]
-              published = item["contentDetails"].get(
-                  "videoPublishedAt",
-                  item["snippet"]["publishedAt"]
+              title_lower = title.lower()
+
+              if (
+                  "rajasthan current affairs" in title_lower
+                  or "rajasthan" in title_lower and "sujas" in title_lower
+              ):
+                  selected = item
+                  break
+
+          if selected is None:
+              raise SystemExit(
+                  "❌ Latest uploads में Rajasthan Current Affairs video नहीं मिला"
               )
 
-              print("TITLE:", title)
-              print("VIDEO ID:", video_id)
-              print("PUBLISHED:", published)
-              print("URL:", f"https://www.youtube.com/watch?v={video_id}")
-              print("-" * 60)
+          video_id = selected["contentDetails"]["videoId"]
+          title = selected["snippet"]["title"]
+          published = selected["contentDetails"].get(
+              "videoPublishedAt",
+              selected["snippet"]["publishedAt"]
+          )
 
-          if not items:
-              raise SystemExit("❌ कोई video नहीं मिला")
-
-          latest = items[0]
-          latest_id = latest["contentDetails"]["videoId"]
-
-          print()
           print("========================================")
-          print("LATEST VIDEO ID:", latest_id)
+          print("✅ RAJASTHAN VIDEO FOUND")
+          print("========================================")
+          print("TITLE:", title)
+          print("VIDEO ID:", video_id)
+          print("PUBLISHED:", published)
+          print("URL:", f"https://www.youtube.com/watch?v={video_id}")
           print("========================================")
           PY
