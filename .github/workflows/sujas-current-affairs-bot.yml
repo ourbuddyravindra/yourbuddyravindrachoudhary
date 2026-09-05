@@ -20,28 +20,27 @@ jobs:
 
   process:
 
-    # workflow_run में केवल successful Sujas run पर काम करना है
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
 
     runs-on: ubuntu-latest
 
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
 
-      # ==================================================
+      # ==========================================
       # 1. CHECKOUT
-      # ==================================================
+      # ==========================================
 
       - name: Checkout repository
         uses: actions/checkout@v6
 
 
-      # ==================================================
-      # 2. FIND SUJAS PDF
-      # ==================================================
+      # ==========================================
+      # 2. FIND LATEST SUJAS PDF
+      # ==========================================
 
       - name: Find latest Sujas PDF
         id: find_pdf
@@ -65,59 +64,35 @@ jobs:
               "AdmDepartmentCode": 0,
               "AttachmentList": [],
               "BeneficiaryCategory": 0,
-
               "Date": "",
-
               "DepartmentCode": 85,
-
               "DeptSectionCode": 0,
-
               "EntryFromDate": "",
               "EntryToDate": "",
-
               "FromDate": "",
-
               "Id": 0,
 
               "IndexModel": {
-
                   "AdvanceSearchModel": {},
-
                   "PageSize": 15,
-
                   "IsPostBack": False,
-
                   "OrderByAsc": 0,
-
                   "Search": None,
-
                   "OrderBy": None
               },
 
               "IndividualBeneficiaryScheme": "",
-
               "IsImagesRequired": True,
-
               "IsLatest": -1,
-
               "IsNotJankalyan": -1,
-
               "OrderNo": "",
-
               "SchemeCode": 0,
-
               "Search": "",
-
               "SectorIds": 0,
-
               "Status": 1,
-
               "SubTypeCode": "2583",
-
               "Title": "",
-
               "ToDate": "",
-
               "Type": "10"
           }
 
@@ -128,9 +103,7 @@ jobs:
               timeout=30
           )
 
-
           response.raise_for_status()
-
 
           data = response.json()
 
@@ -160,46 +133,32 @@ jobs:
           if not records:
 
               raise SystemExit(
-                  "❌ कोई Sujas record नहीं मिला"
+                  "❌ Sujas record नहीं मिला"
               )
 
 
-          # ------------------------------------------------
-          # Find first record containing PDF/attachment
-          # ------------------------------------------------
-
-          selected = None
-          pdf_url = None
-          order_id = None
-          title = None
-          date_value = None
-
-
-          def recursive_find_pdf(obj):
+          def find_pdf(obj):
 
               if isinstance(obj, dict):
 
                   for key, value in obj.items():
 
-                      key_lower = str(key).lower()
-
                       if isinstance(value, str):
 
-                          value_lower = value.lower()
+                          v = value.lower()
 
                           if (
-                              ".pdf" in value_lower
+                              ".pdf" in v
                               and (
-                                  value_lower.startswith("http://")
+                                  v.startswith("http://")
                                   or
-                                  value_lower.startswith("https://")
+                                  v.startswith("https://")
                               )
                           ):
 
                               return value
 
-
-                      found = recursive_find_pdf(value)
+                      found = find_pdf(value)
 
                       if found:
                           return found
@@ -209,7 +168,7 @@ jobs:
 
                   for item in obj:
 
-                      found = recursive_find_pdf(item)
+                      found = find_pdf(item)
 
                       if found:
                           return found
@@ -218,29 +177,30 @@ jobs:
               return None
 
 
+          selected = None
+          pdf_url = None
+
+
           for record in records:
 
-              possible_pdf = recursive_find_pdf(record)
+              found = find_pdf(record)
 
-              if possible_pdf:
+              if found:
 
                   selected = record
-
-                  pdf_url = possible_pdf
-
+                  pdf_url = found
                   break
 
 
-          if selected is None:
+          if not pdf_url:
 
               raise SystemExit(
                   "❌ Sujas PDF URL नहीं मिला"
               )
 
 
-          # ------------------------------------------------
-          # Get metadata
-          # ------------------------------------------------
+          order_id = ""
+
 
           for key in [
               "Id",
@@ -253,35 +213,9 @@ jobs:
 
               if key in selected:
 
-                  order_id = selected[key]
-
-                  break
-
-
-          for key in [
-              "Title",
-              "title",
-              "OrderTitle",
-              "orderTitle"
-          ]:
-
-              if key in selected:
-
-                  title = selected[key]
-
-                  break
-
-
-          for key in [
-              "Date",
-              "date",
-              "OrderDate",
-              "orderDate"
-          ]:
-
-              if key in selected:
-
-                  date_value = selected[key]
+                  order_id = str(
+                      selected[key]
+                  )
 
                   break
 
@@ -299,16 +233,6 @@ jobs:
           )
 
           print(
-              "TITLE:",
-              title
-          )
-
-          print(
-              "DATE:",
-              date_value
-          )
-
-          print(
               "ORDER ID:",
               order_id
           )
@@ -323,13 +247,13 @@ jobs:
           )
 
 
-          # ------------------------------------------------
-          # Download PDF
-          # ------------------------------------------------
+          # ==========================================
+          # DOWNLOAD PDF
+          # ==========================================
 
           pdf_response = requests.get(
               pdf_url,
-              timeout=60
+              timeout=90
           )
 
           pdf_response.raise_for_status()
@@ -345,21 +269,16 @@ jobs:
           )
 
 
-          size_mb = (
-              pdf_path.stat().st_size
-              / 1024
-              / 1024
-          )
-
-
           print(
-              f"✅ PDF downloaded: {size_mb:.2f} MB"
+              "✅ PDF downloaded:",
+              pdf_path.stat().st_size,
+              "bytes"
           )
 
 
-          # ------------------------------------------------
-          # GitHub outputs
-          # ------------------------------------------------
+          # ==========================================
+          # OUTPUTS
+          # ==========================================
 
           with open(
               os.environ["GITHUB_OUTPUT"],
@@ -376,15 +295,15 @@ jobs:
               )
 
               output.write(
-                  f"order_id={order_id or ''}\n"
+                  f"order_id={order_id}\n"
               )
 
           PY
 
 
-      # ==================================================
-      # 3. CHECK DUPLICATE
-      # ==================================================
+      # ==========================================
+      # 3. DUPLICATE CHECK
+      # ==========================================
 
       - name: Check processed Sujas
         id: duplicate
@@ -410,7 +329,8 @@ jobs:
           echo "CURRENT SUJAS ID: ${CURRENT_ID:-NONE}"
 
 
-          if [ -n "$CURRENT_ID" ] && [ "$OLD_ID" = "$CURRENT_ID" ]; then
+          if [ -n "$CURRENT_ID" ] &&
+             [ "$OLD_ID" = "$CURRENT_ID" ]; then
 
             echo "⏭️ SAME SUJAS — ALREADY PROCESSED"
 
@@ -425,9 +345,9 @@ jobs:
           fi
 
 
-      # ==================================================
+      # ==========================================
       # 4. GEMINI + TELEGRAM
-      # ==================================================
+      # ==========================================
 
       - name: Generate and send current affairs
         if: steps.duplicate.outputs.new_sujas == 'true'
@@ -459,13 +379,10 @@ jobs:
           import base64
           import json
           import os
+          import time
           import requests
           from pathlib import Path
 
-
-          # ==================================================
-          # CONFIG
-          # ==================================================
 
           API_KEY = os.environ[
               "GEMINI_API_KEY"
@@ -493,9 +410,9 @@ jobs:
           )
 
 
-          # ==================================================
-          # VALIDATE PDF
-          # ==================================================
+          # ==========================================
+          # CHECK PDF
+          # ==========================================
 
           if not PDF_PATH.exists():
 
@@ -516,58 +433,55 @@ jobs:
 
           print(
               "PDF size:",
-              len(pdf_bytes)
+              len(pdf_bytes),
+              "bytes"
           )
 
 
-          # ==================================================
-          # GEMINI PROMPT
-          # ==================================================
+          # ==========================================
+          # PROMPT
+          # ==========================================
 
           prompt = r"""
           तुम Rajasthan competitive examinations के लिए
           Current Affairs expert हो।
 
-          नीचे दिया गया PDF राजस्थान सरकार के Sujas
-          e-Bulletin का source document है।
+          यह PDF Rajasthan Government के Sujas e-Bulletin
+          का source document है।
 
-          केवल PDF में मौजूद जानकारी के आधार पर
-          current affairs तैयार करो।
+          केवल इसी PDF में मौजूद information का उपयोग करो।
 
-          अत्यंत महत्वपूर्ण नियम:
+          IMPORTANT:
 
-          1. PDF के बाहर से कोई fact मत जोड़ो।
-          2. कोई current affair invent मत करो।
-          3. अगर information स्पष्ट नहीं है तो उसे छोड़ दो।
-          4. केवल exam-relevant जानकारी चुनो।
-          5. Rajasthan-related information को प्राथमिकता दो।
-          6. नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
-             पुरस्कार, खेल, व्यक्ति, स्थान, बजट,
-             अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य,
-             पर्यावरण, उद्योग, निवेश, infrastructure,
-             reports, indices, science & technology,
-             AI और digital developments जैसी categories
-             शामिल की जा सकती हैं।
-          7. Generic national news तभी लो जब वह
-             Rajasthan से directly relevant हो।
-          8. प्रत्येक प्रश्न के लिए 4 options बनाओ।
-          9. केवल एक सही उत्तर हो।
-          10. उत्तर PDF में उपलब्ध information से ही हो।
-          11. प्रश्न RPSC/RSSB स्तर के exam-oriented हों।
-          12. भाषा साफ और शुद्ध हिंदी हो।
-          13. बहुत लंबा explanation मत दो।
-          14. Duplicate facts मत दो।
-          15. PDF में मौजूद page number पता हो तो
-              उसे page field में दो।
-          16. हर item के साथ source "Sujas" रखो।
+          - कोई fact अपनी तरफ से मत बनाना।
+          - PDF के बाहर की current affairs मत जोड़ना।
+          - यदि कोई information स्पष्ट नहीं है तो उसे छोड़ना।
+          - केवल exam-relevant information लेना।
+          - Rajasthan-related facts को प्राथमिकता देना।
+          - नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
+            पुरस्कार, खेल, व्यक्ति, स्थान, अर्थव्यवस्था,
+            कृषि, शिक्षा, स्वास्थ्य, पर्यावरण, उद्योग,
+            निवेश, infrastructure, reports, science &
+            technology, AI और digital developments जैसी
+            जानकारी शामिल की जा सकती है।
+          - Generic national news को छोड़ना जब तक उसका
+            Rajasthan से सीधा संबंध न हो।
+          - Duplicate facts नहीं बनाने।
+          - प्रश्न RPSC/RSSB परीक्षा के स्तर के हों।
+          - भाषा साफ एवं शुद्ध हिंदी हो।
+          - प्रत्येक प्रश्न के 4 विकल्प हों।
+          - केवल एक सही उत्तर हो।
+          - उत्तर PDF की information से ही होना चाहिए।
+          - यदि page number उपलब्ध हो तो page field में दो।
+          - source हमेशा "Sujas" रखो।
 
-          Output केवल valid JSON में देना है।
+          केवल valid JSON output दो।
           """
 
 
-          # ==================================================
+          # ==========================================
           # JSON SCHEMA
-          # ==================================================
+          # ==========================================
 
           schema = {
 
@@ -628,27 +542,16 @@ jobs:
                           },
 
                           "required": [
-
                               "category",
-
                               "question",
-
                               "option_a",
-
                               "option_b",
-
                               "option_c",
-
                               "option_d",
-
                               "answer",
-
                               "explanation",
-
                               "page",
-
                               "source"
-
                           ]
 
                       }
@@ -664,16 +567,15 @@ jobs:
           }
 
 
-          # ==================================================
-          # GEMINI REQUEST
-          # ==================================================
+          # ==========================================
+          # GEMINI API
+          # ==========================================
 
-          model = "gemini-3.8-flash"
+          MODEL = "gemini-3.7-flash"
 
-
-          url = (
+          API_URL = (
               "https://generativelanguage.googleapis.com/"
-              f"v1beta/models/{model}:generateContent"
+              f"v1beta/models/{MODEL}:generateContent"
           )
 
 
@@ -730,43 +632,124 @@ jobs:
           }
 
 
-          print(
-              "Sending PDF to Gemini..."
-          )
+          # ==========================================
+          # GEMINI RETRY
+          # ==========================================
+
+          MAX_ATTEMPTS = 5
 
 
-          response = requests.post(
-
-              url,
-
-              headers={
-
-                  "x-goog-api-key":
-                      API_KEY,
-
-                  "Content-Type":
-                      "application/json"
-
-              },
-
-              json=payload,
-
-              timeout=300
-
-          )
+          gemini_data = None
 
 
-          if response.status_code != 200:
+          for attempt in range(
+              1,
+              MAX_ATTEMPTS + 1
+          ):
 
               print(
-                  response.text[:5000]
+                  f"Gemini attempt {attempt}/{MAX_ATTEMPTS}"
               )
 
-              response.raise_for_status()
+
+              try:
+
+                  response = requests.post(
+
+                      API_URL,
+
+                      headers={
+
+                          "x-goog-api-key":
+                              API_KEY,
+
+                          "Content-Type":
+                              "application/json"
+
+                      },
+
+                      json=payload,
+
+                      timeout=300
+
+                  )
 
 
-          gemini_data = response.json()
+                  if response.status_code == 200:
 
+                      gemini_data = (
+                          response.json()
+                      )
+
+                      print(
+                          "✅ Gemini response received"
+                      )
+
+                      break
+
+
+                  print(
+                      "⚠️ Gemini HTTP:",
+                      response.status_code
+                  )
+
+                  print(
+                      response.text[:1000]
+                  )
+
+
+                  if response.status_code in [
+                      429,
+                      500,
+                      502,
+                      503,
+                      504
+                  ]:
+
+                      wait_time = (
+                          10 * attempt
+                      )
+
+                      print(
+                          f"⏳ Waiting {wait_time}s..."
+                      )
+
+                      time.sleep(
+                          wait_time
+                      )
+
+                      continue
+
+
+                  response.raise_for_status()
+
+
+              except requests.RequestException as exc:
+
+                  print(
+                      "⚠️ Gemini request error:",
+                      str(exc)
+                  )
+
+                  if attempt == MAX_ATTEMPTS:
+
+                      raise
+
+                  time.sleep(
+                      10 * attempt
+                  )
+
+
+          if gemini_data is None:
+
+              raise SystemExit(
+                  "❌ Gemini failed after retries"
+              )
+
+
+          # ==========================================
+          # EXTRACT RESPONSE
+          # ==========================================
 
           candidates = gemini_data.get(
               "candidates",
@@ -777,7 +760,7 @@ jobs:
           if not candidates:
 
               raise SystemExit(
-                  "❌ Gemini ने कोई candidate नहीं दिया"
+                  "❌ Gemini candidate नहीं मिला"
               )
 
 
@@ -818,40 +801,25 @@ jobs:
 
 
           print(
-              "========================================"
-          )
-
-          print(
-              "GEMINI ITEMS:",
+              "Generated MCQs:",
               len(items)
           )
 
-          print(
-              "========================================"
-          )
-
-
-          # ==================================================
-          # NO CONTENT
-          # ==================================================
 
           if not items:
 
               raise SystemExit(
-                  "❌ Gemini ने कोई current-affairs item नहीं बनाया"
+                  "❌ कोई MCQ generate नहीं हुआ"
               )
 
 
-          # ==================================================
+          # ==========================================
           # SAVE JSON
-          # ==================================================
+          # ==========================================
 
-          output_file = Path(
+          Path(
               "current_affairs.json"
-          )
-
-
-          output_file.write_text(
+          ).write_text(
 
               json.dumps(
                   result,
@@ -863,32 +831,15 @@ jobs:
           )
 
 
-          # ==================================================
+          # ==========================================
           # TELEGRAM
-          # ==================================================
+          # ==========================================
 
           telegram_url = (
               "https://api.telegram.org/"
               f"bot{BOT_TOKEN}/sendMessage"
           )
 
-
-          header = (
-              "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
-              "━━━━━━━━━━━━━━━━━━\n\n"
-          )
-
-
-          footer = (
-              "\n\n━━━━━━━━━━━━━━━━━━\n"
-              "📚 Source: <b>Sujas</b>\n"
-              "🤖 YourBuddy Current Affairs"
-          )
-
-
-          # --------------------------------------------------
-          # Send one message per MCQ
-          # --------------------------------------------------
 
           sent = 0
 
@@ -898,68 +849,30 @@ jobs:
               start=1
           ):
 
-              category = item.get(
-                  "category",
-                  "राजस्थान करेंट अफेयर्स"
+              message = (
+
+                  "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
+                  "━━━━━━━━━━━━━━━━━━\n\n"
+
+                  f"<b>प्रश्न {index}.</b> "
+                  f"{item.get('question', '')}\n\n"
+
+                  f"(A) {item.get('option_a', '')}\n"
+                  f"(B) {item.get('option_b', '')}\n"
+                  f"(C) {item.get('option_c', '')}\n"
+                  f"(D) {item.get('option_d', '')}\n\n"
+
+                  f"✅ <b>उत्तर:</b> "
+                  f"{item.get('answer', '')}\n\n"
+
+                  f"💡 <b>व्याख्या:</b> "
+                  f"{item.get('explanation', '')}"
               )
 
-              question = item.get(
-                  "question",
-                  ""
-              )
-
-              a = item.get(
-                  "option_a",
-                  ""
-              )
-
-              b = item.get(
-                  "option_b",
-                  ""
-              )
-
-              c = item.get(
-                  "option_c",
-                  ""
-              )
-
-              d = item.get(
-                  "option_d",
-                  ""
-              )
-
-              answer = item.get(
-                  "answer",
-                  ""
-              )
-
-              explanation = item.get(
-                  "explanation",
-                  ""
-              )
 
               page = item.get(
                   "page",
                   ""
-              )
-
-
-              message = (
-
-                  header
-
-                  f"<b>प्रश्न {index}.</b> "
-                  f"{question}\n\n"
-
-                  f"(A) {a}\n"
-                  f"(B) {b}\n"
-                  f"(C) {c}\n"
-                  f"(D) {d}\n\n"
-
-                  f"✅ <b>उत्तर:</b> {answer}\n"
-
-                  f"💡 <b>व्याख्या:</b> "
-                  f"{explanation}"
               )
 
 
@@ -970,14 +883,19 @@ jobs:
                   )
 
 
-              message += footer
+              message += (
+                  "\n\n━━━━━━━━━━━━━━━━━━\n"
+                  "📚 Source: <b>Sujas</b>\n"
+                  "🤖 YourBuddy Current Affairs"
+              )
 
 
-              # Telegram message limit safety
+              # Telegram max safety
               if len(message) > 4000:
 
-                  message = message[:3950] + (
-                      "\n\n…"
+                  message = (
+                      message[:3950]
+                      + "\n\n…"
                   )
 
 
@@ -1002,7 +920,6 @@ jobs:
                   },
 
                   timeout=30
-
               )
 
 
@@ -1030,13 +947,17 @@ jobs:
 
 
               print(
-                  f"✅ Telegram: {index}"
+                  f"✅ Telegram message {index} sent"
               )
 
 
-          # ==================================================
+              # Telegram rate safety
+              time.sleep(0.5)
+
+
+          # ==========================================
           # SAVE STATE
-          # ==================================================
+          # ==========================================
 
           Path(
               "current_affairs_sujas_state.txt"
@@ -1053,24 +974,29 @@ jobs:
           )
 
           print(
-              f"✅ TOTAL TELEGRAM MESSAGES: {sent}"
+              "✅ SUJAS CURRENT AFFAIRS COMPLETE"
           )
 
           print(
-              "✅ SUJAS PROCESSING COMPLETE"
+              "✅ MCQs:",
+              len(items)
+          )
+
+          print(
+              "✅ TELEGRAM SENT:",
+              sent
           )
 
           print(
               "========================================"
           )
 
-
           PY
 
 
-      # ==================================================
+      # ==========================================
       # 5. SAVE RESULTS
-      # ==================================================
+      # ==========================================
 
       - name: Save current affairs data
         if: steps.duplicate.outputs.new_sujas == 'true'
