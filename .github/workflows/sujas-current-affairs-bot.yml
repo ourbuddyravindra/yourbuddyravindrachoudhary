@@ -3,7 +3,7 @@ name: Sujas Current Affairs Bot
 on:
   workflow_run:
     workflows:
-      - "Sujas Auto"
+      - "Rajasthan Sujas Auto Upload"
     types:
       - completed
 
@@ -44,6 +44,7 @@ jobs:
 
       - name: Find latest Sujas PDF
         id: find_pdf
+
         run: |
 
           python - <<'PY'
@@ -62,38 +63,67 @@ jobs:
           payload = {
 
               "AdmDepartmentCode": 0,
+
               "AttachmentList": [],
+
               "BeneficiaryCategory": 0,
+
               "Date": "",
+
               "DepartmentCode": 85,
+
               "DeptSectionCode": 0,
+
               "EntryFromDate": "",
+
               "EntryToDate": "",
+
               "FromDate": "",
+
               "Id": 0,
 
               "IndexModel": {
+
                   "AdvanceSearchModel": {},
+
                   "PageSize": 15,
+
                   "IsPostBack": False,
+
                   "OrderByAsc": 0,
+
                   "Search": None,
+
                   "OrderBy": None
+
               },
 
               "IndividualBeneficiaryScheme": "",
+
               "IsImagesRequired": True,
+
               "IsLatest": -1,
+
               "IsNotJankalyan": -1,
+
               "OrderNo": "",
+
               "SchemeCode": 0,
+
               "Search": "",
+
               "SectorIds": 0,
+
               "Status": 1,
+
               "SubTypeCode": "2583",
+
               "Title": "",
+
               "ToDate": "",
+
               "Type": "10"
+
           }
 
 
@@ -158,9 +188,11 @@ jobs:
 
                               return value
 
+
                       found = find_pdf(value)
 
                       if found:
+
                           return found
 
 
@@ -171,6 +203,7 @@ jobs:
                       found = find_pdf(item)
 
                       if found:
+
                           return found
 
 
@@ -178,6 +211,7 @@ jobs:
 
 
           selected = None
+
           pdf_url = None
 
 
@@ -188,7 +222,9 @@ jobs:
               if found:
 
                   selected = record
+
                   pdf_url = found
+
                   break
 
 
@@ -203,12 +239,14 @@ jobs:
 
 
           for key in [
+
               "Id",
               "ID",
               "id",
               "OrderId",
               "OrderID",
               "orderId"
+
           ]:
 
               if key in selected:
@@ -298,6 +336,7 @@ jobs:
                   f"order_id={order_id}\n"
               )
 
+
           PY
 
 
@@ -307,6 +346,7 @@ jobs:
 
       - name: Check processed Sujas
         id: duplicate
+
         run: |
 
           CURRENT_ID="${{ steps.find_pdf.outputs.order_id }}"
@@ -326,6 +366,7 @@ jobs:
 
 
           echo "OLD SUJAS ID: ${OLD_ID:-NONE}"
+
           echo "CURRENT SUJAS ID: ${CURRENT_ID:-NONE}"
 
 
@@ -350,6 +391,7 @@ jobs:
       # ==========================================
 
       - name: Generate and send current affairs
+
         if: steps.duplicate.outputs.new_sujas == 'true'
 
         env:
@@ -372,6 +414,7 @@ jobs:
           ORDER_ID:
             ${{ steps.find_pdf.outputs.order_id }}
 
+
         run: |
 
           python - <<'PY'
@@ -388,21 +431,26 @@ jobs:
               "GEMINI_API_KEY"
           ]
 
+
           BOT_TOKEN = os.environ[
               "CURRENT_AFFAIRS_BOT_TOKEN"
           ]
+
 
           CHANNEL = os.environ[
               "TELEGRAM_CHANNEL"
           ]
 
+
           PDF_PATH = Path(
               os.environ["PDF_PATH"]
           )
 
+
           PDF_URL = os.environ[
               "PDF_URL"
           ]
+
 
           ORDER_ID = os.environ.get(
               "ORDER_ID",
@@ -443,6 +491,7 @@ jobs:
           # ==========================================
 
           prompt = r"""
+
           तुम Rajasthan competitive examinations के लिए
           Current Affairs expert हो।
 
@@ -476,6 +525,7 @@ jobs:
           - source हमेशा "Sujas" रखो।
 
           केवल valid JSON output दो।
+
           """
 
 
@@ -542,6 +592,7 @@ jobs:
                           },
 
                           "required": [
+
                               "category",
                               "question",
                               "option_a",
@@ -552,6 +603,7 @@ jobs:
                               "explanation",
                               "page",
                               "source"
+
                           ]
 
                       }
@@ -573,6 +625,7 @@ jobs:
 
           MODEL = "gemini-3.7-flash"
 
+
           API_URL = (
               "https://generativelanguage.googleapis.com/"
               f"v1beta/models/{MODEL}:generateContent"
@@ -593,7 +646,9 @@ jobs:
                       "parts": [
 
                           {
+
                               "text": prompt
+
                           },
 
                           {
@@ -637,7 +692,6 @@ jobs:
           # ==========================================
 
           MAX_ATTEMPTS = 5
-
 
           gemini_data = None
 
@@ -693,26 +747,31 @@ jobs:
                       response.status_code
                   )
 
+
                   print(
                       response.text[:1000]
                   )
 
 
                   if response.status_code in [
+
                       429,
                       500,
                       502,
                       503,
                       504
+
                   ]:
 
                       wait_time = (
                           10 * attempt
                       )
 
+
                       print(
                           f"⏳ Waiting {wait_time}s..."
                       )
+
 
                       time.sleep(
                           wait_time
@@ -731,9 +790,11 @@ jobs:
                       str(exc)
                   )
 
+
                   if attempt == MAX_ATTEMPTS:
 
                       raise
+
 
                   time.sleep(
                       10 * attempt
@@ -769,6 +830,7 @@ jobs:
               candidates[0]
               .get("content", {})
               .get("parts", [])
+
           )
 
 
@@ -828,6 +890,7 @@ jobs:
               ),
 
               encoding="utf-8"
+
           )
 
 
@@ -836,8 +899,10 @@ jobs:
           # ==========================================
 
           telegram_url = (
+
               "https://api.telegram.org/"
               f"bot{BOT_TOKEN}/sendMessage"
+
           )
 
 
@@ -849,17 +914,22 @@ jobs:
               start=1
           ):
 
+
               message = (
 
                   "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
+
                   "━━━━━━━━━━━━━━━━━━\n\n"
 
                   f"<b>प्रश्न {index}.</b> "
                   f"{item.get('question', '')}\n\n"
 
                   f"(A) {item.get('option_a', '')}\n"
+
                   f"(B) {item.get('option_b', '')}\n"
+
                   f"(C) {item.get('option_c', '')}\n"
+
                   f"(D) {item.get('option_d', '')}\n\n"
 
                   f"✅ <b>उत्तर:</b> "
@@ -867,6 +937,7 @@ jobs:
 
                   f"💡 <b>व्याख्या:</b> "
                   f"{item.get('explanation', '')}"
+
               )
 
 
@@ -879,23 +950,36 @@ jobs:
               if page:
 
                   message += (
-                      f"\n\n📄 <b>Page:</b> {page}"
+
+                      f"\n\n📄 <b>Page:</b> "
+                      f"{page}"
+
                   )
 
 
               message += (
+
                   "\n\n━━━━━━━━━━━━━━━━━━\n"
+
                   "📚 Source: <b>Sujas</b>\n"
+
                   "🤖 YourBuddy Current Affairs"
+
               )
 
 
-              # Telegram max safety
+              # ==========================================
+              # TELEGRAM MESSAGE SAFETY
+              # ==========================================
+
               if len(message) > 4000:
 
                   message = (
+
                       message[:3950]
+
                       + "\n\n…"
+
                   )
 
 
@@ -920,6 +1004,7 @@ jobs:
                   },
 
                   timeout=30
+
               )
 
 
@@ -927,7 +1012,9 @@ jobs:
 
 
               telegram_result = (
+
                   telegram_response.json()
+
               )
 
 
@@ -936,10 +1023,13 @@ jobs:
               ):
 
                   raise SystemExit(
+
                       "❌ Telegram error: "
+
                       + str(
                           telegram_result
                       )
+
                   )
 
 
@@ -947,11 +1037,15 @@ jobs:
 
 
               print(
-                  f"✅ Telegram message {index} sent"
+
+                  f"✅ Telegram message "
+                  f"{index} sent"
+
               )
 
 
               # Telegram rate safety
+
               time.sleep(0.5)
 
 
@@ -966,6 +1060,7 @@ jobs:
               ORDER_ID,
 
               encoding="utf-8"
+
           )
 
 
@@ -991,6 +1086,7 @@ jobs:
               "========================================"
           )
 
+
           PY
 
 
@@ -999,6 +1095,7 @@ jobs:
       # ==========================================
 
       - name: Save current affairs data
+
         if: steps.duplicate.outputs.new_sujas == 'true'
 
         run: |
@@ -1020,10 +1117,13 @@ jobs:
             git config user.email \
               "41898282+github-actions[bot]@users.noreply.github.com"
 
+
             git commit \
               -m "Generate Sujas current affairs"
 
+
             git push
+
 
             echo "✅ Current affairs saved."
 
