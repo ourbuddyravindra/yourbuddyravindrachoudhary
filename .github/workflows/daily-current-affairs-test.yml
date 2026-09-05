@@ -21,6 +21,10 @@ jobs:
           from zoneinfo import ZoneInfo
           import re
 
+          # =========================================================
+          # DATE
+          # =========================================================
+
           today = datetime.now(
               ZoneInfo("Asia/Kolkata")
           ).date()
@@ -31,7 +35,11 @@ jobs:
           print("=" * 70)
 
           headers = {
-              "User-Agent": "Mozilla/5.0"
+              "User-Agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 "
+                  "Chrome/140.0 Safari/537.36"
+              )
           }
 
           # =========================================================
@@ -43,73 +51,120 @@ jobs:
 
           dst_url = "https://dst.rajasthan.gov.in/news.aspx"
 
-          r = requests.get(
-              dst_url,
-              headers=headers,
-              timeout=30
-          )
-
-          print("DST Status:", r.status_code)
-
-          soup = BeautifulSoup(r.text, "html.parser")
-
-          count = 0
-
-          for row in soup.find_all("tr"):
-
-              cells = row.find_all(["td", "th"])
-
-              if len(cells) < 3:
-                  continue
-
-              values = [
-                  c.get_text(" ", strip=True)
-                  for c in cells
-              ]
-
-              text = " | ".join(values)
-
-              # Look for dates like 03/09/2026
-              match = re.search(
-                  r"\b(\d{2}/\d{2}/\d{4})\b",
-                  text
+          try:
+              r = requests.get(
+                  dst_url,
+                  headers=headers,
+                  timeout=30
               )
 
-              if not match:
-                  continue
+              print("DST Status:", r.status_code)
 
-              date_text = match.group(1)
+              soup = BeautifulSoup(
+                  r.text,
+                  "html.parser"
+              )
 
-              try:
-                  item_date = datetime.strptime(
-                      date_text,
-                      "%d/%m/%Y"
-                  ).date()
-              except:
-                  continue
+              dst_count = 0
 
-              # Only recent items
-              days_old = (today - item_date).days
+              for row in soup.find_all("tr"):
 
-              if days_old < 0 or days_old > 7:
-                  continue
+                  cells = row.find_all(
+                      ["td", "th"]
+                  )
 
-              title = values[1] if len(values) >= 2 else values[0]
+                  if len(cells) < 2:
+                      continue
 
-              # Ignore navigation/empty rows
-              if len(title) < 10:
-                  continue
+                  values = [
+                      c.get_text(
+                          " ",
+                          strip=True
+                      )
+                      for c in cells
+                  ]
 
-              print("\n📌 Title:", title)
-              print("📅 Date:", date_text)
-              print("🔗 Source:", dst_url)
+                  text = " | ".join(values)
 
-              count += 1
+                  # Date: 03/09/2026
+                  match = re.search(
+                      r"\b(\d{2}/\d{2}/\d{4})\b",
+                      text
+                  )
 
-              if count >= 10:
-                  break
+                  if not match:
+                      continue
 
-          print("\nDST useful entries:", count)
+                  date_text = match.group(1)
+
+                  try:
+                      item_date = datetime.strptime(
+                          date_text,
+                          "%d/%m/%Y"
+                      ).date()
+                  except:
+                      continue
+
+                  days_old = (
+                      today - item_date
+                  ).days
+
+                  # Last 7 days
+                  if days_old < 0 or days_old > 7:
+                      continue
+
+                  # Find useful title
+                  title = ""
+
+                  for value in values:
+                      if len(value) >= 20:
+                          if (
+                              "03/" not in value
+                              and "04/" not in value
+                              and "05/" not in value
+                          ):
+                              title = value
+                              break
+
+                  if not title:
+                      continue
+
+                  # Find actual link
+                  link = dst_url
+
+                  a = row.find("a")
+
+                  if a and a.get("href"):
+                      href = a.get("href")
+
+                      if href.startswith("http"):
+                          link = href
+                      elif href.startswith("/"):
+                          link = (
+                              "https://dst.rajasthan.gov.in"
+                              + href
+                          )
+
+                  print("\n📌 Title:", title)
+                  print("📅 Date:", date_text)
+                  print("🔗 Source:", link)
+
+                  dst_count += 1
+
+                  if dst_count >= 10:
+                      break
+
+              print(
+                  "\nDST useful entries:",
+                  dst_count
+              )
+
+          except Exception as e:
+
+              print(
+                  "DST ERROR:",
+                  str(e)
+              )
 
           # =========================================================
           # 2. PIB — SCIENCE & TECHNOLOGY
@@ -120,100 +175,234 @@ jobs:
 
           pib_url = (
               "https://www.pib.gov.in/"
-              "AllRelease.aspx?MenuId=22&PMO=1&lang=1&reg=1"
+              "AllRelease.aspx?"
+              "MenuId=30&lang=1&reg=3"
           )
 
-          r = requests.get(
-              pib_url,
-              headers=headers,
-              timeout=30
-          )
+          try:
 
-          print("PIB Status:", r.status_code)
-
-          soup = BeautifulSoup(r.text, "html.parser")
-
-          keywords = [
-              "ISRO",
-              "space",
-              "technology",
-              "science",
-              "artificial intelligence",
-              "AI",
-              "cyber",
-              "digital",
-              "quantum",
-              "semiconductor",
-              "satellite"
-          ]
-
-          count = 0
-
-          for row in soup.find_all("tr"):
-
-              cells = row.find_all(["td", "th"])
-
-              if len(cells) < 2:
-                  continue
-
-              values = [
-                  c.get_text(" ", strip=True)
-                  for c in cells
-              ]
-
-              text = " ".join(values)
-
-              # Need a recent date
-              match = re.search(
-                  r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
-                  text
+              r = requests.get(
+                  pib_url,
+                  headers=headers,
+                  timeout=30
               )
 
-              if not match:
-                  continue
+              print(
+                  "PIB Status:",
+                  r.status_code
+              )
 
-              try:
-                  day = int(match.group(1))
-                  month = int(match.group(2))
-                  year = int(match.group(3))
+              soup = BeautifulSoup(
+                  r.text,
+                  "html.parser"
+              )
 
-                  item_date = datetime(
-                      year,
-                      month,
-                      day
-                  ).date()
+              # Technology/science keywords
+              keywords = [
+                  "ISRO",
+                  "space",
+                  "satellite",
+                  "rocket",
+                  "GSLV",
+                  "PSLV",
+                  "EOS",
+                  "artificial intelligence",
+                  "AI",
+                  "technology",
+                  "science",
+                  "quantum",
+                  "semiconductor",
+                  "cyber",
+                  "digital",
+                  "biotechnology",
+                  "research",
+                  "innovation",
+                  "astronomy",
+                  "nuclear",
+                  "robotics"
+              ]
 
-              except:
-                  continue
+              seen = set()
+              pib_count = 0
 
-              days_old = (today - item_date).days
+              # =====================================================
+              # PIB page में सभी links देखो
+              # =====================================================
 
-              if days_old < 0 or days_old > 3:
-                  continue
+              for a in soup.find_all("a"):
 
-              if not any(
-                  k.lower() in text.lower()
-                  for k in keywords
-              ):
-                  continue
+                  title = a.get_text(
+                      " ",
+                      strip=True
+                  )
 
-              title = values[-1]
+                  if not title:
+                      continue
 
-              if len(title) < 15:
-                  continue
+                  if len(title) < 25:
+                      continue
 
-              print("\n📌 Title:", title)
-              print("📅 Date:", item_date.strftime("%d-%m-%Y"))
-              print("🔗 Source:", pib_url)
+                  title_lower = title.lower()
 
-              count += 1
+                  # Technology/science filter
+                  if not any(
+                      k.lower() in title_lower
+                      for k in keywords
+                  ):
+                      continue
 
-              if count >= 10:
-                  break
+                  # Duplicate
+                  key = re.sub(
+                      r"\s+",
+                      " ",
+                      title_lower
+                  ).strip()
 
-          print("\nPIB useful entries:", count)
+                  if key in seen:
+                      continue
+
+                  seen.add(key)
+
+                  # =================================================
+                  # Link
+                  # =================================================
+
+                  href = a.get(
+                      "href",
+                      ""
+                  )
+
+                  if href.startswith("http"):
+                      link = href
+
+                  elif href.startswith("/"):
+                      link = (
+                          "https://www.pib.gov.in"
+                          + href
+                      )
+
+                  elif href:
+                      link = (
+                          "https://www.pib.gov.in/"
+                          + href.lstrip("./")
+                      )
+
+                  else:
+                      link = pib_url
+
+                  # =================================================
+                  # Date खोजने की कोशिश
+                  # =================================================
+
+                  parent_text = ""
+
+                  parent = a.parent
+
+                  if parent:
+                      parent_text = parent.get_text(
+                          " ",
+                          strip=True
+                      )
+
+                  # आसपास के element में भी date खोजो
+                  container_text = parent_text
+
+                  if parent and parent.parent:
+                      container_text += " " + (
+                          parent.parent.get_text(
+                              " ",
+                              strip=True
+                          )
+                      )
+
+                  date_match = re.search(
+                      r"(\d{1,2})[/-]"
+                      r"(\d{1,2})[/-]"
+                      r"(\d{4})",
+                      container_text
+                  )
+
+                  item_date = None
+
+                  if date_match:
+
+                      try:
+                          item_date = datetime(
+                              int(
+                                  date_match.group(3)
+                              ),
+                              int(
+                                  date_match.group(2)
+                              ),
+                              int(
+                                  date_match.group(1)
+                              )
+                          ).date()
+
+                      except:
+                          item_date = None
+
+                  # अगर date नहीं मिली तो भी title दिखाओ
+                  # ताकि extraction diagnose हो सके
+
+                  if item_date:
+
+                      days_old = (
+                          today - item_date
+                      ).days
+
+                      if (
+                          days_old < 0
+                          or days_old > 3
+                      ):
+                          continue
+
+                  print(
+                      "\n📌 Title:",
+                      title
+                  )
+
+                  if item_date:
+                      print(
+                          "📅 Date:",
+                          item_date.strftime(
+                              "%d-%m-%Y"
+                          )
+                      )
+                  else:
+                      print(
+                          "📅 Date:",
+                          "Not detected"
+                      )
+
+                  print(
+                      "🔗 Link:",
+                      link
+                  )
+
+                  pib_count += 1
+
+                  if pib_count >= 15:
+                      break
+
+              print(
+                  "\nPIB useful entries:",
+                  pib_count
+              )
+
+          except Exception as e:
+
+              print(
+                  "PIB ERROR:",
+                  str(e)
+              )
+
+          # =========================================================
+          # FINISHED
+          # =========================================================
 
           print("\n" + "=" * 70)
           print("EXTRACTION TEST FINISHED")
           print("=" * 70)
+
           PY
