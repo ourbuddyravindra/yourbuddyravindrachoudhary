@@ -1,57 +1,80 @@
-name: Meridian Caption Test
+name: Meridian New Video Detector
 
 on:
   workflow_dispatch:
 
 jobs:
-  caption-test:
+  detect-video:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Check captions
+      - name: Detect latest Meridian video
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
+          from datetime import datetime, timezone
 
-          key = os.environ["YOUTUBE_API_KEY"]
-          video_id = "u8HlUeD7r0A"
+          KEY = os.environ["YOUTUBE_API_KEY"]
 
+          # Meridian Academy channel
           r = requests.get(
-              "https://www.googleapis.com/youtube/v3/captions",
+              "https://www.googleapis.com/youtube/v3/channels",
               params={
-                  "part": "id,snippet",
-                  "videoId": video_id,
-                  "key": key
+                  "part": "contentDetails",
+                  "forHandle": "meridian.academy",
+                  "key": KEY
               },
               timeout=20
           )
+          r.raise_for_status()
 
-          print("HTTP STATUS:", r.status_code)
+          channel = r.json()["items"][0]
+          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
 
-          if r.status_code != 200:
-              print("API RESPONSE:")
-              print(r.text)
-              raise SystemExit(1)
+          # Latest uploads
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/playlistItems",
+              params={
+                  "part": "snippet,contentDetails",
+                  "playlistId": uploads,
+                  "maxResults": 5,
+                  "key": KEY
+              },
+              timeout=20
+          )
+          r.raise_for_status()
 
-          data = r.json()
-          tracks = data.get("items", [])
+          items = r.json().get("items", [])
+
+          print("Meridian Academy latest videos:")
+          print()
+
+          for item in items:
+              video_id = item["contentDetails"]["videoId"]
+              title = item["snippet"]["title"]
+              published = item["contentDetails"].get(
+                  "videoPublishedAt",
+                  item["snippet"]["publishedAt"]
+              )
+
+              print("TITLE:", title)
+              print("VIDEO ID:", video_id)
+              print("PUBLISHED:", published)
+              print("URL:", f"https://www.youtube.com/watch?v={video_id}")
+              print("-" * 60)
+
+          if not items:
+              raise SystemExit("❌ कोई video नहीं मिला")
+
+          latest = items[0]
+          latest_id = latest["contentDetails"]["videoId"]
 
           print()
-          print("CAPTION TRACKS:", len(tracks))
-          print()
-
-          if not tracks:
-              print("❌ इस video के लिए कोई caption track नहीं मिला।")
-          else:
-              print("✅ Caption tracks मिले:")
-              for track in tracks:
-                  s = track["snippet"]
-                  print("Language:", s.get("language"))
-                  print("Name:", s.get("name"))
-                  print("Kind:", s.get("trackKind"))
-                  print()
+          print("========================================")
+          print("LATEST VIDEO ID:", latest_id)
+          print("========================================")
           PY
