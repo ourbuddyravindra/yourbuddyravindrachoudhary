@@ -44,7 +44,6 @@ jobs:
 
       - name: Find latest Sujas PDF
         id: find_pdf
-
         run: |
 
           python - <<'PY'
@@ -61,7 +60,6 @@ jobs:
 
 
           payload = {
-
               "AdmDepartmentCode": 0,
               "AttachmentList": [],
               "BeneficiaryCategory": 0,
@@ -133,8 +131,6 @@ jobs:
 
           elif isinstance(data, dict):
 
-              # Direct list keys
-
               for key in [
                   "Data",
                   "data",
@@ -153,8 +149,6 @@ jobs:
                       items = value
                       break
 
-
-              # Nested dictionary
 
               if items is None:
 
@@ -224,7 +218,7 @@ jobs:
 
 
           # ==========================================
-          # FIND PDF URL RECURSIVELY
+          # FIND PDF URL
           # ==========================================
 
           def find_pdf(obj):
@@ -240,13 +234,9 @@ jobs:
                           if (
                               ".pdf" in v
                               and (
-                                  v.startswith(
-                                      "http://"
-                                  )
+                                  v.startswith("http://")
                                   or
-                                  v.startswith(
-                                      "https://"
-                                  )
+                                  v.startswith("https://")
                               )
                           ):
 
@@ -295,12 +285,8 @@ jobs:
               print("")
               print("❌ कोई PDF URL नहीं मिला")
               print("========================================")
-              print(
-                  "FIRST RECORD PREVIEW:"
-              )
-              print(
-                  str(items[0])[:5000]
-              )
+              print("FIRST RECORD PREVIEW:")
+              print(str(items[0])[:5000])
               print("========================================")
 
               raise SystemExit(
@@ -448,7 +434,6 @@ jobs:
 
       - name: Check processed Sujas
         id: duplicate
-
         run: |
 
           CURRENT_ID="${{ steps.find_pdf.outputs.order_id }}"
@@ -499,7 +484,6 @@ jobs:
       # ==========================================
 
       - name: Generate and send current affairs
-
         if: steps.duplicate.outputs.new_sujas == 'true'
 
         env:
@@ -607,6 +591,7 @@ jobs:
           print("========================================")
           print("GEMINI PROCESSING")
           print("========================================")
+
           print(
               "PDF size:",
               len(pdf_bytes),
@@ -619,46 +604,44 @@ jobs:
           # ==========================================
 
           prompt = r"""
+          तुम Rajasthan competitive examinations के लिए
+          Current Affairs expert हो।
 
-तुम Rajasthan competitive examinations के लिए
-Current Affairs expert हो।
+          यह PDF Rajasthan Government के Sujas e-Bulletin
+          का source document है।
 
-यह PDF Rajasthan Government के Sujas e-Bulletin
-का source document है।
+          केवल इसी PDF में मौजूद information का उपयोग करो।
 
-केवल इसी PDF में मौजूद information का उपयोग करो।
+          IMPORTANT:
 
-IMPORTANT:
+          - कोई fact अपनी तरफ से मत बनाना।
+          - PDF के बाहर की current affairs मत जोड़ना।
+          - यदि कोई information स्पष्ट नहीं है तो उसे छोड़ना।
+          - केवल exam-relevant information लेना।
+          - Rajasthan-related facts को प्राथमिकता देना।
+          - नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
+            पुरस्कार, खेल, व्यक्ति, स्थान, अर्थव्यवस्था,
+            कृषि, शिक्षा, स्वास्थ्य, पर्यावरण, उद्योग,
+            निवेश, infrastructure, reports, science &
+            technology, AI और digital developments जैसी
+            जानकारी शामिल की जा सकती है।
+          - Generic national news को छोड़ना जब तक उसका
+            Rajasthan से सीधा संबंध न हो।
+          - Duplicate facts नहीं बनाने।
+          - प्रश्न RPSC/RSSB परीक्षा के स्तर के हों।
+          - भाषा साफ एवं शुद्ध हिंदी हो।
+          - प्रत्येक प्रश्न के 4 विकल्प हों।
+          - केवल एक सही उत्तर हो।
+          - उत्तर PDF की information से ही होना चाहिए।
+          - यदि page number उपलब्ध हो तो page field में दो।
+          - source हमेशा "Sujas" रखो।
+          - प्रश्नों में केवल वही तथ्य इस्तेमाल करो जो
+            PDF में स्पष्ट रूप से मौजूद हैं।
+          - एक ही fact पर कई लगभग समान प्रश्न मत बनाओ।
+          - प्रश्नों की quality quantity से अधिक महत्वपूर्ण है।
 
-- कोई fact अपनी तरफ से मत बनाना।
-- PDF के बाहर की current affairs मत जोड़ना।
-- यदि कोई information स्पष्ट नहीं है तो उसे छोड़ना।
-- केवल exam-relevant information लेना।
-- Rajasthan-related facts को प्राथमिकता देना।
-- नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
-  पुरस्कार, खेल, व्यक्ति, स्थान, अर्थव्यवस्था,
-  कृषि, शिक्षा, स्वास्थ्य, पर्यावरण, उद्योग,
-  निवेश, infrastructure, reports, science &
-  technology, AI और digital developments जैसी
-  जानकारी शामिल की जा सकती है।
-- Generic national news को छोड़ना जब तक उसका
-  Rajasthan से सीधा संबंध न हो।
-- Duplicate facts नहीं बनाने।
-- प्रश्न RPSC/RSSB परीक्षा के स्तर के हों।
-- भाषा साफ एवं शुद्ध हिंदी हो।
-- प्रत्येक प्रश्न के 4 विकल्प हों।
-- केवल एक सही उत्तर हो।
-- उत्तर PDF की information से ही होना चाहिए।
-- यदि page number उपलब्ध हो तो page field में दो।
-- source हमेशा "Sujas" रखो।
-- प्रश्नों में केवल वही तथ्य इस्तेमाल करो जो
-  PDF में स्पष्ट रूप से मौजूद हैं।
-- एक ही fact पर कई लगभग समान प्रश्न मत बनाओ।
-- प्रश्नों की quality quantity से अधिक महत्वपूर्ण है।
-
-केवल valid JSON output दो।
-
-"""
+          केवल valid JSON output दो।
+          """
 
 
           # ==========================================
@@ -1075,7 +1058,6 @@ IMPORTANT:
               start=1
           ):
 
-
               category = item.get(
                   "category",
                   ""
@@ -1194,9 +1176,7 @@ IMPORTANT:
 
 
               telegram_result = (
-
                   telegram_response.json()
-
               )
 
 
@@ -1246,14 +1226,17 @@ IMPORTANT:
           print("========================================")
           print("✅ SUJAS CURRENT AFFAIRS COMPLETE")
           print("========================================")
+
           print(
               "✅ MCQs:",
               len(items)
           )
+
           print(
               "✅ TELEGRAM SENT:",
               sent
           )
+
           print("========================================")
 
 
@@ -1265,9 +1248,7 @@ IMPORTANT:
       # ==========================================
 
       - name: Save current affairs data
-
         if: steps.duplicate.outputs.new_sujas == 'true'
-
         run: |
 
           git add \
