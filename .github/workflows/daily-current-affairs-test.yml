@@ -1,80 +1,74 @@
-name: Meridian Rajasthan Content Test
+name: Gemini Current Affairs Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  content-test:
+  gemini-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Get Rajasthan video metadata
+      - name: Test Gemini
         env:
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
 
-          KEY = os.environ["YOUTUBE_API_KEY"]
+          key = os.environ["GEMINI_API_KEY"]
 
-          # Latest confirmed Rajasthan video
-          video_id = "x8IoUpU6ifs"
-
-          response = requests.get(
-              "https://www.googleapis.com/youtube/v3/videos",
-              params={
-                  "part": "snippet,contentDetails",
-                  "id": video_id,
-                  "key": KEY
-              },
-              timeout=20
+          url = (
+              "https://generativelanguage.googleapis.com/"
+              "v1beta/models/gemini-3.7-flash:generateContent"
           )
 
-          response.raise_for_status()
+          prompt = """
+          राजस्थान प्रतियोगी परीक्षाओं के लिए एक MCQ बनाओ।
+
+          विषय: राजस्थान का वर्तमान घटनाक्रम
+
+          प्रश्न हिंदी में हो।
+          4 विकल्प A, B, C, D हों।
+          सही उत्तर बताओ।
+          छोटी व्याख्या दो।
+
+          यह केवल API connection test है।
+          """
+
+          response = requests.post(
+              url,
+              headers={
+                  "x-goog-api-key": key,
+                  "Content-Type": "application/json"
+              },
+              json={
+                  "contents": [
+                      {
+                          "parts": [
+                              {"text": prompt}
+                          ]
+                      }
+                  ]
+              },
+              timeout=60
+          )
+
+          print("HTTP STATUS:", response.status_code)
+
+          if response.status_code != 200:
+              print(response.text)
+              raise SystemExit(1)
 
           data = response.json()
 
-          if not data.get("items"):
-              raise SystemExit("❌ Video नहीं मिला")
+          text = data["candidates"][0]["content"]["parts"][0]["text"]
 
-          video = data["items"][0]
-
-          snippet = video["snippet"]
-          details = video["contentDetails"]
-
+          print()
           print("========================================")
-          print("✅ RAJASTHAN VIDEO CONTENT TEST")
+          print("✅ GEMINI RESPONSE")
           print("========================================")
-
-          print("TITLE:")
-          print(snippet.get("title", ""))
-
-          print()
-          print("PUBLISHED:")
-          print(snippet.get("publishedAt", ""))
-
-          print()
-          print("DESCRIPTION:")
-          print(snippet.get("description", ""))
-
-          print()
-          print("TAGS:")
-          print(", ".join(snippet.get("tags", [])))
-
-          print()
-          print("DURATION:")
-          print(details.get("duration", ""))
-
-          print()
-          print("CAPTIONS AVAILABLE:")
-          print(details.get("caption", ""))
-
-          print()
-          print("VIDEO URL:")
-          print(f"https://www.youtube.com/watch?v={video_id}")
-
-          print()
+          print(text)
           print("========================================")
           PY
