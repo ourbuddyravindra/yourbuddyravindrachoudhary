@@ -10,200 +10,210 @@ jobs:
     steps:
       - name: Install packages
         run: |
-          pip install requests
+          pip install requests beautifulsoup4
 
-      - name: Fetch Official Sources
+      - name: Extract Official News
         run: |
           python - <<'PY'
           import requests
+          from bs4 import BeautifulSoup
           from datetime import datetime
           from zoneinfo import ZoneInfo
+          import re
 
           today = datetime.now(
               ZoneInfo("Asia/Kolkata")
-          ).strftime("%d-%m-%Y")
+          ).date()
 
-          print("=" * 60)
-          print(f"OFFICIAL SOURCE TEST — {today}")
-          print("=" * 60)
+          print("=" * 70)
+          print("OFFICIAL CURRENT AFFAIRS SOURCE EXTRACTION")
+          print("Today:", today)
+          print("=" * 70)
 
-          # ---------------------------------
-          # 1. Rajasthan DIPR
-          # ---------------------------------
-
-          print("\n🏜️ RAJASTHAN — DIPR")
-
-          url = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
-
-          payload = {
-              "AdmDepartmentCode": 0,
-              "AttachmentList": [],
-              "BeneficiaryCategory": 0,
-              "Date": "",
-              "DepartmentCode": 85,
-              "DeptSectionCode": 0,
-              "EntryFromDate": "",
-              "EntryToDate": "",
-              "FromDate": "",
-              "Id": 0,
-              "IndexModel": {
-                  "AdvanceSearchModel": {},
-                  "PageSize": 15,
-                  "IsPostBack": False,
-                  "OrderByAsc": 0,
-                  "Search": None,
-                  "OrderBy": None
-              },
-              "IndividualBeneficiaryScheme": "",
-              "IsImagesRequired": True,
-              "IsLatest": -1,
-              "IsNotJankalyan": -1,
-              "OrderNo": "",
-              "SchemeCode": 0,
-              "Search": "",
-              "SectorIds": 0,
-              "Status": 1,
-              "SubTypeCode": "2583",
-              "Title": "",
-              "ToDate": "",
-              "Type": "10"
+          headers = {
+              "User-Agent": "Mozilla/5.0"
           }
 
-          try:
-              r = requests.post(
-                  url,
-                  json=payload,
-                  timeout=30
-              )
+          # =========================================================
+          # 1. RAJASTHAN DST
+          # =========================================================
 
-              print("DIPR Status:", r.status_code)
+          print("\n🏜️ RAJASTHAN SCIENCE & TECHNOLOGY — DST")
+          print("-" * 70)
 
-              data = r.json()
+          dst_url = "https://dst.rajasthan.gov.in/news.aspx"
 
-              print("DIPR response received successfully.")
+          r = requests.get(
+              dst_url,
+              headers=headers,
+              timeout=30
+          )
 
-              # Show first few records
-              records = []
+          print("DST Status:", r.status_code)
 
-              if isinstance(data, dict):
-                  for key in ["Data", "data", "Result", "result", "Items", "items"]:
-                      if isinstance(data.get(key), list):
-                          records = data[key]
-                          break
+          soup = BeautifulSoup(r.text, "html.parser")
 
-              if not records and isinstance(data, list):
-                  records = data
+          count = 0
 
-              print("Records found:", len(records))
+          for row in soup.find_all("tr"):
 
-              for item in records[:5]:
-                  print("\n---")
-                  print("Title:", item.get("Title") or item.get("title"))
-                  print("Date:", item.get("Date") or item.get("date"))
-                  print("ID:", item.get("Id") or item.get("id"))
+              cells = row.find_all(["td", "th"])
 
-          except Exception as e:
-              print("DIPR ERROR:", type(e).__name__, e)
+              if len(cells) < 3:
+                  continue
 
-          # ---------------------------------
-          # 2. Rajasthan Science & Technology
-          # ---------------------------------
-
-          print("\n💻 RAJASTHAN SCIENCE & TECHNOLOGY")
-
-          dst_url = "https://dst.rajasthan.gov.in/"
-
-          try:
-              r = requests.get(
-                  dst_url,
-                  timeout=30
-              )
-
-              print("DST Status:", r.status_code)
-              print("DST Page downloaded:", len(r.text), "characters")
-
-              text = r.text.replace("<", "\n<")
-
-              keywords = [
-                  "science",
-                  "technology",
-                  "space",
-                  "AI",
-                  "artificial",
-                  "innovation"
+              values = [
+                  c.get_text(" ", strip=True)
+                  for c in cells
               ]
 
-              found = []
+              text = " | ".join(values)
 
-              for line in text.splitlines():
-                  low = line.lower()
-
-                  if any(k.lower() in low for k in keywords):
-                      clean = line.strip()
-
-                      if clean and len(clean) > 20:
-                          found.append(clean[:300])
-
-              print("Technology-related lines found:", len(found))
-
-              for line in found[:10]:
-                  print("-", line)
-
-          except Exception as e:
-              print("DST ERROR:", type(e).__name__, e)
-
-          # ---------------------------------
-          # 3. PIB
-          # ---------------------------------
-
-          print("\n🇮🇳 PIB — TECHNOLOGY SOURCE")
-
-          pib_url = "https://www.pib.gov.in/AllRelease.aspx?MenuId=22&PMO=1&lang=1&reg=1"
-
-          try:
-              r = requests.get(
-                  pib_url,
-                  timeout=30,
-                  headers={
-                      "User-Agent": "Mozilla/5.0"
-                  }
+              # Look for dates like 03/09/2026
+              match = re.search(
+                  r"\b(\d{2}/\d{2}/\d{4})\b",
+                  text
               )
 
-              print("PIB Status:", r.status_code)
-              print("PIB Page downloaded:", len(r.text), "characters")
+              if not match:
+                  continue
 
-              text = r.text.replace("<", "\n<")
+              date_text = match.group(1)
 
-              keywords = [
-                  "ISRO",
-                  "space",
-                  "technology",
-                  "science",
-                  "AI",
-                  "cyber",
-                  "digital"
+              try:
+                  item_date = datetime.strptime(
+                      date_text,
+                      "%d/%m/%Y"
+                  ).date()
+              except:
+                  continue
+
+              # Only recent items
+              days_old = (today - item_date).days
+
+              if days_old < 0 or days_old > 7:
+                  continue
+
+              title = values[1] if len(values) >= 2 else values[0]
+
+              # Ignore navigation/empty rows
+              if len(title) < 10:
+                  continue
+
+              print("\n📌 Title:", title)
+              print("📅 Date:", date_text)
+              print("🔗 Source:", dst_url)
+
+              count += 1
+
+              if count >= 10:
+                  break
+
+          print("\nDST useful entries:", count)
+
+          # =========================================================
+          # 2. PIB — SCIENCE & TECHNOLOGY
+          # =========================================================
+
+          print("\n💻 PIB — SCIENCE & TECHNOLOGY")
+          print("-" * 70)
+
+          pib_url = (
+              "https://www.pib.gov.in/"
+              "AllRelease.aspx?MenuId=22&PMO=1&lang=1&reg=1"
+          )
+
+          r = requests.get(
+              pib_url,
+              headers=headers,
+              timeout=30
+          )
+
+          print("PIB Status:", r.status_code)
+
+          soup = BeautifulSoup(r.text, "html.parser")
+
+          keywords = [
+              "ISRO",
+              "space",
+              "technology",
+              "science",
+              "artificial intelligence",
+              "AI",
+              "cyber",
+              "digital",
+              "quantum",
+              "semiconductor",
+              "satellite"
+          ]
+
+          count = 0
+
+          for row in soup.find_all("tr"):
+
+              cells = row.find_all(["td", "th"])
+
+              if len(cells) < 2:
+                  continue
+
+              values = [
+                  c.get_text(" ", strip=True)
+                  for c in cells
               ]
 
-              found = []
+              text = " ".join(values)
 
-              for line in text.splitlines():
-                  clean = line.strip()
+              # Need a recent date
+              match = re.search(
+                  r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b",
+                  text
+              )
 
-                  if len(clean) > 20 and any(
-                      k.lower() in clean.lower()
-                      for k in keywords
-                  ):
-                      found.append(clean[:300])
+              if not match:
+                  continue
 
-              print("Technology-related PIB lines:", len(found))
+              try:
+                  day = int(match.group(1))
+                  month = int(match.group(2))
+                  year = int(match.group(3))
 
-              for line in found[:15]:
-                  print("-", line)
+                  item_date = datetime(
+                      year,
+                      month,
+                      day
+                  ).date()
 
-          except Exception as e:
-              print("PIB ERROR:", type(e).__name__, e)
+              except:
+                  continue
 
-          print("\n" + "=" * 60)
-          print("SOURCE TEST FINISHED")
-          print("=" * 60)
+              days_old = (today - item_date).days
+
+              if days_old < 0 or days_old > 3:
+                  continue
+
+              if not any(
+                  k.lower() in text.lower()
+                  for k in keywords
+              ):
+                  continue
+
+              title = values[-1]
+
+              if len(title) < 15:
+                  continue
+
+              print("\n📌 Title:", title)
+              print("📅 Date:", item_date.strftime("%d-%m-%Y"))
+              print("🔗 Source:", pib_url)
+
+              count += 1
+
+              if count >= 10:
+                  break
+
+          print("\nPIB useful entries:", count)
+
+          print("\n" + "=" * 70)
+          print("EXTRACTION TEST FINISHED")
+          print("=" * 70)
           PY
