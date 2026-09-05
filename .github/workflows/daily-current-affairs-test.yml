@@ -1,0 +1,63 @@
+name: Daily Current Affairs Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  current-affairs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install packages
+        run: |
+          pip install -U google-genai requests
+
+      - name: Generate Current Affairs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          from google import genai
+          import os
+          from datetime import datetime
+          from zoneinfo import ZoneInfo
+
+          today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y")
+
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+          prompt = f"""
+          आज की तारीख {today} है।
+
+          राजस्थान प्रतियोगी परीक्षाओं के लिए आज के Current Affairs तैयार करो।
+
+          केवल इन 2 categories में सामग्री दो:
+
+          1. राजस्थान Current Affairs
+          2. Science & Technology
+
+          STRICT RULES:
+          - आज की तारीख को ध्यान में रखो।
+          - केवल हाल की और exam-relevant घटनाएँ शामिल करो।
+          - Rajasthan category में खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
+          - Technology category में केवल महत्वपूर्ण Science & Technology/AI/Space/Digital/Cyber developments शामिल करो।
+          - सामान्य India news, politics, entertainment, सामान्य मौसम आदि शामिल मत करो।
+          - बेकार या कम महत्व की खबरें जोड़कर संख्या बढ़ाने की कोशिश मत करो।
+          - यदि किसी category में कोई genuinely important खबर नहीं है तो उसे खाली छोड़ दो।
+          - तथ्य गढ़ना बिल्कुल नहीं है।
+          - हर item के साथ source और source date दो।
+          - Hindi में सरल, परीक्षा-उपयोगी भाषा रखो।
+          - प्रत्येक महत्वपूर्ण news से 1 MCQ बनाओ।
+          - पहले facts, फिर MCQs दो।
+          """
+
+          response = client.models.generate_content(
+              model="gemini-3.8-flash",
+              contents=prompt
+          )
+
+          print("================================")
+          print(f"📅 आज की तारीख: {today}")
+          print("================================")
+          print(response.text)
+          PY
