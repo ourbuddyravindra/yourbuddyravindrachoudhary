@@ -1,39 +1,49 @@
-name: DIPR PDF AI Test
+name: DIPR Sujas AI Test
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  dipr-ai:
+  sujas-ai:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
 
-      # =========================================================
-      # 1. INSTALL TOOLS
-      # =========================================================
+      # ==========================================================
+      # 1. INSTALL OCR TOOLS
+      # ==========================================================
       - name: Install OCR tools
         run: |
           sudo apt-get update
+
           sudo apt-get install -y \
             poppler-utils \
             tesseract-ocr \
             tesseract-ocr-hin \
             tesseract-ocr-eng
 
+          python -m pip install --upgrade pip
           pip install requests
 
-          echo "===== TESSERACT ====="
+          echo "======================================"
+          echo "TESSERACT VERSION"
+          echo "======================================"
           tesseract --version
 
-          echo "===== LANGUAGES ====="
+          echo ""
+          echo "======================================"
+          echo "AVAILABLE LANGUAGES"
+          echo "======================================"
           tesseract --list-langs
 
 
-      # =========================================================
-      # 2. DOWNLOAD LATEST SUJAS
-      # =========================================================
+      # ==========================================================
+      # 2. DOWNLOAD LATEST SUJAS PDF FROM DIPR
+      # ==========================================================
       - name: Download latest Sujas PDF
         run: |
           python - <<'PY'
@@ -76,30 +86,47 @@ jobs:
               "Type": "10"
           }
 
-          r = requests.post(API, json=payload, timeout=30)
-          r.raise_for_status()
+          response = requests.post(
+              API,
+              json=payload,
+              timeout=60
+          )
 
-          data = r.json()
+          response.raise_for_status()
+
+          data = response.json()
+
 
           def find_records(obj):
+
               if isinstance(obj, list):
                   return obj
 
               if isinstance(obj, dict):
+
                   for key in [
-                      "Data", "data",
-                      "Result", "result",
-                      "Items", "items"
+                      "Data",
+                      "data",
+                      "Result",
+                      "result",
+                      "Items",
+                      "items"
                   ]:
-                      if key in obj and isinstance(obj[key], list):
-                          return obj[key]
+
+                      value = obj.get(key)
+
+                      if isinstance(value, list):
+                          return value
 
                   for value in obj.values():
+
                       found = find_records(value)
+
                       if found:
                           return found
 
               return []
+
 
           records = find_records(data)
 
@@ -108,46 +135,110 @@ jobs:
           selected = None
 
           for item in records:
-              title = str(item.get("Title", ""))
 
-              if "सुजस" in title and "बुलेटिन" in title:
+              title = str(
+                  item.get("Title", "")
+              )
+
+              if (
+                  "सुजस" in title
+                  and "बुलेटिन" in title
+              ):
                   selected = item
                   break
 
-          if not selected:
-              raise SystemExit("Sujas bulletin नहीं मिला")
 
-          print("SELECTED:", selected.get("Title"))
-          print("ORDER ID:", selected.get("Id"))
-          print("DATE:", selected.get("HindiDate"))
+          if not selected:
+              raise SystemExit(
+                  "LATEST SUJAS BULLETIN NOT FOUND"
+              )
+
+
+          title = selected.get(
+              "Title",
+              ""
+          )
+
+          order_id = selected.get(
+              "Id",
+              ""
+          )
+
+          date = selected.get(
+              "HindiDate",
+              ""
+          )
+
+
+          print("SELECTED:", title)
+          print("ORDER ID:", order_id)
+          print("DATE:", date)
+
 
           pdf_url = None
 
-          for attachment in selected.get("AttachmentList", []):
-              path = attachment.get("Path", "")
+          attachments = selected.get(
+              "AttachmentList",
+              []
+          )
+
+          for attachment in attachments:
+
+              path = attachment.get(
+                  "Path",
+                  ""
+              )
 
               if ".pdf" in path.lower():
+
                   pdf_url = path
                   break
 
+
           if not pdf_url:
-              raise SystemExit("PDF URL नहीं मिला")
+              raise SystemExit(
+                  "PDF URL NOT FOUND"
+              )
 
-          pdf = requests.get(pdf_url, timeout=90)
-          pdf.raise_for_status()
 
-          Path("sujas_today.pdf").write_bytes(pdf.content)
+          print("PDF URL:")
+          print(pdf_url)
 
-          print("PDF SIZE:", len(pdf.content))
-          print("DOWNLOAD SUCCESS")
+
+          pdf_response = requests.get(
+              pdf_url,
+              timeout=120
+          )
+
+          pdf_response.raise_for_status()
+
+
+          Path(
+              "sujas_today.pdf"
+          ).write_bytes(
+              pdf_response.content
+          )
+
+
+          print(
+              "PDF SIZE:",
+              len(pdf_response.content),
+              "bytes"
+          )
+
+          print(
+              "DOWNLOAD SUCCESS"
+          )
+
           PY
 
 
-      # =========================================================
-      # 3. PDF -> IMAGES
-      # =========================================================
+      # ==========================================================
+      # 3. CONVERT PDF TO HIGH QUALITY JPG PAGES
+      # ==========================================================
       - name: Convert PDF to images
         run: |
+          rm -rf pages
           mkdir -p pages
 
           pdftoppm \
@@ -157,39 +248,51 @@ jobs:
             sujas_today.pdf \
             pages/page
 
-          echo "===== PAGES ====="
+          echo "======================================"
+          echo "GENERATED PAGES"
+          echo "======================================"
+
           ls -lh pages/
 
+          echo ""
           echo "TOTAL PAGES:"
-          find pages -type f | wc -l
+          find pages -name "*.jpg" | wc -l
 
 
-      # =========================================================
+      # ==========================================================
       # 4. HINDI + ENGLISH OCR
-      # =========================================================
+      # ==========================================================
       - name: Hindi OCR
         run: |
           rm -f sujas_ocr.txt
 
           for image in pages/page-*.jpg
           do
-            PAGE=$(basename "$image" .jpg | sed 's/page-//')
+
+            PAGE=$(basename "$image" .jpg)
+            PAGE_NUMBER=$(echo "$PAGE" | sed 's/page-//')
 
             echo ""
             echo "======================================"
-            echo "OCR PAGE: $PAGE"
+            echo "OCR PAGE: $PAGE_NUMBER"
             echo "======================================"
 
-            echo "===== PAGE $PAGE =====" >> sujas_ocr.txt
+            echo "===== PAGE $PAGE_NUMBER =====" \
+              >> sujas_ocr.txt
 
-            tesseract "$image" stdout \
+            tesseract \
+              "$image" \
+              stdout \
               -l hin+eng \
               --psm 3 \
-              2>/dev/null >> sujas_ocr.txt
+              2>/dev/null \
+              >> sujas_ocr.txt
 
             echo "" >> sujas_ocr.txt
             echo "" >> sujas_ocr.txt
+
           done
+
 
           echo ""
           echo "======================================"
@@ -201,75 +304,92 @@ jobs:
 
           echo ""
           echo "========== OCR PREVIEW =========="
+
           head -c 15000 sujas_ocr.txt
+
           echo ""
           echo "================================="
 
 
-      # =========================================================
-      # 5. SOURCE-STRICT GEMINI
-      # =========================================================
-      - name: Source Strict Gemini
+      # ==========================================================
+      # 5. PAGE-WISE GEMINI
+      #    IMAGE + OCR TEXT
+      # ==========================================================
+      - name: Gemini Page Analysis
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
         run: |
           python - <<'PY'
+
           import os
           import json
           import time
+          import base64
           import requests
+
           from pathlib import Path
 
-          API_KEY = os.environ["GEMINI_API_KEY"]
 
-          text = Path("sujas_ocr.txt").read_text(
-              encoding="utf-8",
-              errors="ignore"
+          API_KEY = os.environ.get(
+              "GEMINI_API_KEY"
           )
 
-          print("OCR TEXT LENGTH:", len(text))
-
-          if len(text.strip()) < 1000:
+          if not API_KEY:
               raise SystemExit(
-                  "OCR text बहुत कम है."
+                  "GEMINI_API_KEY secret missing"
               )
 
-          # पूरा OCR भेज रहे हैं
-          source = text[:30000]
 
-          # =====================================================
-          # STRICT SCHEMA
-          # =====================================================
+          MODEL = "gemini-3.5-flash-lite"
+
+
+          # ======================================================
+          # JSON SCHEMA
+          # ======================================================
 
           schema = {
               "type": "object",
               "properties": {
+
                   "items": {
+
                       "type": "array",
+
                       "items": {
+
                           "type": "object",
+
                           "properties": {
+
                               "title": {
                                   "type": "string"
                               },
+
                               "fact": {
                                   "type": "string"
                               },
+
                               "question": {
                                   "type": "string"
                               },
+
                               "option_a": {
                                   "type": "string"
                               },
+
                               "option_b": {
                                   "type": "string"
                               },
+
                               "option_c": {
                                   "type": "string"
                               },
+
                               "option_d": {
                                   "type": "string"
                               },
+
                               "answer": {
                                   "type": "string",
                                   "enum": [
@@ -279,10 +399,13 @@ jobs:
                                       "D"
                                   ]
                               },
+
                               "page": {
                                   "type": "integer"
                               }
+
                           },
+
                           "required": [
                               "title",
                               "fact",
@@ -297,136 +420,341 @@ jobs:
                       }
                   }
               },
+
               "required": [
                   "items"
               ]
           }
 
 
-          # =====================================================
-          # PROMPT
-          # =====================================================
+          # ======================================================
+          # READ OCR
+          # ======================================================
 
-          prompt = f"""
-          तुम RPSC और RSSB के लिए राजस्थान Current Affairs
-          question editor हो।
-
-          तुम्हें केवल नीचे दिए गए SUJAS OCR SOURCE से
-          प्रश्न बनाने हैं।
-
-          ================================
-          सबसे महत्वपूर्ण नियम
-          ================================
-
-          1. SOURCE के बाहर की कोई जानकारी मत जोड़ो।
-
-          2. अपनी सामान्य knowledge का इस्तेमाल मत करो।
-
-          3. किसी व्यक्ति का पद, नाम, संख्या, तारीख,
-             योजना, स्थान या तथ्य SOURCE में स्पष्ट नहीं है
-             तो उसे मत लिखो।
-
-          4. यदि OCR में कोई शब्द अस्पष्ट है तो उस fact को
-             छोड़ दो।
-
-          5. अनुमान लगाकर खाली जानकारी मत भरो।
-
-          6. एक ही fact को अलग-अलग तरीके से बार-बार
-             question मत बनाओ।
-
-          7. केवल exam-worthy information चुनो।
-
-          8. राजस्थान की महत्वपूर्ण घटनाओं को प्राथमिकता दो।
-
-          9. निम्न categories पर ध्यान दो:
-             - नियुक्तियां
-             - योजनाएं
-             - सरकारी कार्यक्रम
-             - नीतियां
-             - बजट/अर्थव्यवस्था
-             - कृषि
-             - शिक्षा
-             - स्वास्थ्य
-             - खेल
-             - पुरस्कार
-             - महत्वपूर्ण व्यक्ति
-             - स्थान
-             - infrastructure
-             - investment
-             - environment
-             - elections
-             - science & technology
-             - AI/digital
-             - अन्य महत्वपूर्ण exam facts
-
-          10. हर item के साथ सही PAGE NUMBER देना जरूरी है।
-
-          11. PAGE NUMBER केवल SOURCE में दिए गए
-              "===== PAGE X =====" marker से निर्धारित करो।
-
-          12. अगर किसी fact का page स्पष्ट रूप से निर्धारित
-              नहीं हो सकता तो उस fact को छोड़ दो।
-
-          13. गलत distractor भी मत बनाओ।
-              Options ऐसे होने चाहिए कि सही answer
-              SOURCE में स्पष्ट रूप से मौजूद हो।
-
-          14. कम लेकिन बिल्कुल सही questions देना
-              ज्यादा questions देने से बेहतर है।
-
-          15. लगभग 10-15 सबसे महत्वपूर्ण questions दो।
-
-          ================================
-          OUTPUT
-          ================================
-
-          केवल JSON format में output दो।
-          कोई explanation, markdown या अतिरिक्त text नहीं।
-
-          ================================
-          SUJAS SOURCE
-          ================================
-
-          {source}
-          """
+          ocr_text = Path(
+              "sujas_ocr.txt"
+          ).read_text(
+              encoding="utf-8",
+              errors="ignore"
+          )
 
 
-          models = [
-              "gemini-3.5-flash-lite",
-              "gemini-3.5-flash"
-          ]
+          # ======================================================
+          # SPLIT OCR BY PAGE
+          # ======================================================
 
-          success = False
+          pages = {}
 
-          for model in models:
+          current_page = None
+          current_lines = []
+
+
+          for line in ocr_text.splitlines():
+
+              if line.startswith(
+                  "===== PAGE "
+              ):
+
+                  if current_page is not None:
+
+                      pages[current_page] = (
+                          "\n".join(
+                              current_lines
+                          )
+                      )
+
+
+                  try:
+
+                      current_page = int(
+                          line
+                          .replace(
+                              "===== PAGE ",
+                              ""
+                          )
+                          .replace(
+                              " =====",
+                              ""
+                          )
+                      )
+
+                  except:
+
+                      current_page = None
+
+
+                  current_lines = []
+
+              else:
+
+                  if current_page is not None:
+                      current_lines.append(line)
+
+
+          if current_page is not None:
+
+              pages[current_page] = (
+                  "\n".join(
+                      current_lines
+                  )
+              )
+
+
+          print(
+              "OCR PAGES FOUND:",
+              sorted(pages.keys())
+          )
+
+
+          # ======================================================
+          # PROCESS EVERY PAGE
+          # ======================================================
+
+          all_items = []
+
+
+          for page_no in sorted(
+              pages.keys()
+          ):
+
+              image_path = (
+                  f"pages/page-{page_no}.jpg"
+              )
+
+
+              if not Path(
+                  image_path
+              ).exists():
+
+                  print(
+                      "IMAGE NOT FOUND:",
+                      image_path
+                  )
+
+                  continue
+
 
               print("")
-              print("================================")
-              print("MODEL:", model)
-              print("================================")
+              print(
+                  "======================================"
+              )
+              print(
+                  f"PROCESSING PAGE {page_no}"
+              )
+              print(
+                  "======================================"
+              )
+
+
+              page_ocr = pages[
+                  page_no
+              ]
+
+
+              # --------------------------------------------------
+              # IMAGE BASE64
+              # --------------------------------------------------
+
+              image_bytes = Path(
+                  image_path
+              ).read_bytes()
+
+
+              image_b64 = base64.b64encode(
+                  image_bytes
+              ).decode(
+                  "utf-8"
+              )
+
+
+              # --------------------------------------------------
+              # PROMPT
+              # --------------------------------------------------
+
+              prompt = f"""
+
+              तुम RPSC और RSSB परीक्षाओं के लिए
+              राजस्थान Current Affairs विशेषज्ञ हो।
+
+              तुम्हें SUJAS e-Bulletin के PAGE {page_no}
+              से महत्वपूर्ण exam-oriented MCQs बनाने हैं।
+
+              तुम्हारे पास इस page की ORIGINAL IMAGE और
+              उसी page का OCR TEXT दोनों हैं।
+
+              ==================================================
+              SOURCE PRIORITY
+              ==================================================
+
+              1. ORIGINAL IMAGE सबसे महत्वपूर्ण source है।
+
+              2. OCR text केवल सहायता के लिए है।
+
+              3. यदि OCR और image में अंतर हो,
+                 तो image को सही मानो।
+
+              ==================================================
+              STRICT ACCURACY RULES
+              ==================================================
+
+              1. SOURCE के बाहर की कोई जानकारी मत जोड़ो।
+
+              2. अपनी सामान्य knowledge का उपयोग मत करो।
+
+              3. किसी नाम, पद, तारीख, संख्या,
+                 स्थान या योजना का अनुमान मत लगाओ।
+
+              4. यदि कोई शब्द image में साफ नहीं है,
+                 उस fact से question मत बनाओ।
+
+              5. OCR की गलती को image देखकर सुधारो।
+
+              6. केवल इसी PAGE में दिखाई/लिखी हुई
+                 जानकारी से प्रश्न बनाओ।
+
+              7. दूसरे pages की जानकारी मत मिलाओ।
+
+              8. एक ही fact से duplicate questions मत बनाओ।
+
+              9. सामान्य शुभकामना, slogan,
+                 decorative text और irrelevant content
+                 को छोड़ दो।
+
+              10. केवल महत्वपूर्ण exam-worthy facts लो।
+
+              11. हर question का page number {page_no} ही होना चाहिए।
+
+              12. यदि इस page से केवल 1-2 अच्छे questions
+                  बनते हैं तो केवल वही दो।
+
+              13. ज्यादा questions बनाने के लिए
+                  facts invent मत करो।
+
+              14. Options भी source-safe होने चाहिए।
+
+              15. यदि किसी option की जानकारी source में
+                  नहीं है तो उसे केवल distractor के रूप में
+                  इस्तेमाल मत करो।
+
+              16. Date और numerical figures को
+                  ORIGINAL IMAGE से verify करो।
+
+              ==================================================
+              QUESTION QUALITY
+              ==================================================
+
+              प्रश्न RPSC/RSSB level के होने चाहिए।
+
+              प्राथमिकता:
+
+              - सरकारी योजनाएं
+              - सरकारी कार्यक्रम
+              - नियुक्तियां
+              - महत्वपूर्ण व्यक्ति
+              - बजट/अर्थव्यवस्था
+              - कृषि
+              - शिक्षा
+              - स्वास्थ्य
+              - खेल
+              - पुरस्कार
+              - infrastructure
+              - investment
+              - environment
+              - elections
+              - science & technology
+              - AI/digital
+              - महत्वपूर्ण स्थान
+              - महत्वपूर्ण सरकारी निर्णय
+
+              ==================================================
+              OCR TEXT
+              ==================================================
+
+              {page_ocr}
+
+              ==================================================
+              OUTPUT
+              ==================================================
+
+              केवल JSON output दो।
+
+              कोई explanation नहीं।
+              कोई markdown नहीं।
+              कोई अतिरिक्त text नहीं।
+
+              यदि कोई useful fact नहीं है:
+
+              {{
+                "items": []
+              }}
+
+              """
+
+
+              # --------------------------------------------------
+              # REQUEST
+              # --------------------------------------------------
+
+              payload = {
+
+                  "contents": [
+
+                      {
+
+                          "parts": [
+
+                              {
+
+                                  "inline_data": {
+
+                                      "mime_type":
+                                          "image/jpeg",
+
+                                      "data":
+                                          image_b64
+                                  }
+
+                              },
+
+                              {
+
+                                  "text":
+                                      prompt
+                              }
+
+                          ]
+
+                      }
+
+                  ],
+
+                  "generationConfig": {
+
+                      "temperature": 0,
+
+                      "responseMimeType":
+                          "application/json",
+
+                      "responseSchema":
+                          schema
+                  }
+
+              }
+
 
               url = (
                   "https://generativelanguage.googleapis.com/"
                   "v1beta/models/"
-                  f"{model}:generateContent"
+                  f"{MODEL}:generateContent"
               )
 
-              payload = {
-                  "contents": [
-                      {
-                          "parts": [
-                              {
-                                  "text": prompt
-                              }
-                          ]
-                      }
-                  ],
-                  "generationConfig": {
-                      "temperature": 0,
-                      "responseMimeType": "application/json",
-                      "responseSchema": schema
-                  }
-              }
+
+              page_success = False
+
+
+              # --------------------------------------------------
+              # RETRY
+              # --------------------------------------------------
 
               for attempt in range(3):
 
@@ -434,157 +762,328 @@ jobs:
                       f"ATTEMPT {attempt + 1}/3"
                   )
 
+
                   try:
 
                       response = requests.post(
+
                           url,
+
                           params={
                               "key": API_KEY
                           },
+
                           json=payload,
+
                           timeout=120
                       )
+
 
                       print(
                           "HTTP STATUS:",
                           response.status_code
                       )
 
+
                       if response.status_code == 200:
 
                           data = response.json()
 
-                          output = (
-                              data["candidates"][0]
-                              ["content"]["parts"][0]["text"]
+
+                          candidates = data.get(
+                              "candidates",
+                              []
                           )
 
-                          # JSON validate
-                          result = json.loads(output)
+
+                          if not candidates:
+
+                              print(
+                                  "NO CANDIDATES"
+                              )
+
+                              break
+
+
+                          parts = (
+                              candidates[0]
+                              .get("content", {})
+                              .get("parts", [])
+                          )
+
+
+                          if not parts:
+
+                              print(
+                                  "NO RESPONSE PARTS"
+                              )
+
+                              break
+
+
+                          output = parts[0].get(
+                              "text",
+                              ""
+                          )
+
+
+                          result = json.loads(
+                              output
+                          )
+
 
                           items = result.get(
                               "items",
                               []
                           )
 
-                          print("")
+
                           print(
-                              "TOTAL QUESTIONS:",
+                              f"PAGE {page_no} QUESTIONS:",
                               len(items)
                           )
 
-                          print("")
-                          print(
-                              "========== SOURCE-STRICT RESULT =========="
-                          )
 
-                          for i, item in enumerate(
-                              items,
-                              start=1
-                          ):
+                          for item in items:
 
-                              print("")
-                              print(
-                                  f"Q{i}. "
-                                  f"{item['question']}"
+                              item["page"] = page_no
+
+                              all_items.append(
+                                  item
                               )
 
-                              print(
-                                  f"A) {item['option_a']}"
-                              )
 
-                              print(
-                                  f"B) {item['option_b']}"
-                              )
+                          page_success = True
 
-                              print(
-                                  f"C) {item['option_c']}"
-                              )
-
-                              print(
-                                  f"D) {item['option_d']}"
-                              )
-
-                              print(
-                                  f"ANSWER: "
-                                  f"{item['answer']}"
-                              )
-
-                              print(
-                                  f"PAGE: "
-                                  f"{item['page']}"
-                              )
-
-                              print(
-                                  f"FACT: "
-                                  f"{item['fact']}"
-                              )
-
-                          print("")
-                          print(
-                              "=========================================="
-                          )
-
-                          Path(
-                              "current_affairs.json"
-                          ).write_text(
-                              json.dumps(
-                                  result,
-                                  ensure_ascii=False,
-                                  indent=2
-                              ),
-                              encoding="utf-8"
-                          )
-
-                          success = True
                           break
 
-                      print(
-                          response.text[:2000]
-                      )
 
-                      if response.status_code in [
-                          429,
-                          500,
-                          502,
-                          503,
-                          504
-                      ]:
-
-                          wait = 10 * (
-                              attempt + 1
-                          )
+                      else:
 
                           print(
-                              f"Waiting {wait}s..."
+                              response.text[:2000]
                           )
 
-                          time.sleep(wait)
-                          continue
 
-                      break
+                          if response.status_code in [
+                              429,
+                              500,
+                              502,
+                              503,
+                              504
+                          ]:
 
-                  except Exception as e:
+                              wait = (
+                                  8 *
+                                  (attempt + 1)
+                              )
+
+                              print(
+                                  f"WAITING {wait}s..."
+                              )
+
+                              time.sleep(
+                                  wait
+                              )
+
+                          else:
+
+                              break
+
+
+                  except Exception as error:
 
                       print(
                           "ERROR:",
-                          repr(e)
+                          repr(error)
                       )
 
+
                       if attempt < 2:
-                          time.sleep(10)
 
-              if success:
-                  print("")
+                          time.sleep(
+                              8
+                          )
+
+
+              if not page_success:
+
                   print(
-                      "SUCCESS MODEL:",
-                      model
+                      f"PAGE {page_no} FAILED"
                   )
-                  break
 
-          if not success:
-              raise SystemExit(
-                  "Gemini failed."
+
+          # ======================================================
+          # REMOVE DUPLICATE QUESTIONS
+          # ======================================================
+
+          unique_items = []
+
+          seen = set()
+
+
+          for item in all_items:
+
+              question = str(
+                  item.get(
+                      "question",
+                      ""
+                  )
+              ).strip()
+
+
+              normalized = (
+                  question
+                  .lower()
+                  .replace(
+                      " ",
+                      ""
+                  )
               )
 
+
+              if not normalized:
+                  continue
+
+
+              if normalized in seen:
+                  continue
+
+
+              seen.add(
+                  normalized
+              )
+
+
+              unique_items.append(
+                  item
+              )
+
+
+          # ======================================================
+          # FINAL JSON
+          # ======================================================
+
+          final_result = {
+
+              "items":
+                  unique_items
+          }
+
+
+          Path(
+              "current_affairs.json"
+          ).write_text(
+
+              json.dumps(
+                  final_result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+
+              encoding="utf-8"
+          )
+
+
+          # ======================================================
+          # PRINT FINAL RESULT
+          # ======================================================
+
+          print("")
+          print(
+              "======================================"
+          )
+          print(
+              "FINAL TOTAL QUESTIONS:",
+              len(unique_items)
+          )
+          print(
+              "======================================"
+          )
+
+
+          for index, item in enumerate(
+              unique_items,
+              1
+          ):
+
+              print("")
+              print(
+                  f"Q{index}. "
+                  f"{item.get('question', '')}"
+              )
+
+              print(
+                  f"A) {item.get('option_a', '')}"
+              )
+
+              print(
+                  f"B) {item.get('option_b', '')}"
+              )
+
+              print(
+                  f"C) {item.get('option_c', '')}"
+              )
+
+              print(
+                  f"D) {item.get('option_d', '')}"
+              )
+
+              print(
+                  "ANSWER:",
+                  item.get(
+                      "answer",
+                      ""
+                  )
+              )
+
+              print(
+                  "PAGE:",
+                  item.get(
+                      "page",
+                      ""
+                  )
+              )
+
+              print(
+                  "FACT:",
+                  item.get(
+                      "fact",
+                      ""
+                  )
+              )
+
+
+          print("")
+          print(
+              "JSON FILE CREATED:"
+          )
+          print(
+              "current_affairs.json"
+          )
+
           PY
+
+
+      # ==========================================================
+      # 6. SHOW GENERATED JSON
+      # ==========================================================
+      - name: Show final JSON
+        run: |
+          echo "======================================"
+          echo "FINAL JSON"
+          echo "======================================"
+
+          cat current_affairs.json
+
+
+      # ==========================================================
+      # 7. SAVE JSON AS ARTIFACT
+      # ==========================================================
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: sujas-current-affairs-result
+          path: |
+            current_affairs.json
+            sujas_ocr.txt
