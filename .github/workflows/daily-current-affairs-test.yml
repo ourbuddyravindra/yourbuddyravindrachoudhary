@@ -1,15 +1,14 @@
-name: Meridian YouTube Test
+name: YouTube Current Affairs Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  test-youtube:
+  youtube-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
 
     steps:
-      - name: Get latest Meridian Academy videos
+      - name: Get YouTube video data
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
@@ -17,51 +16,44 @@ jobs:
           import os
           import requests
 
+          video_id = "u8HlUeD7r0A"
           key = os.environ["YOUTUBE_API_KEY"]
 
-          # Meridian Academy channel handle
-          url = "https://www.googleapis.com/youtube/v3/channels"
+          url = "https://www.googleapis.com/youtube/v3/videos"
+
           params = {
-              "part": "contentDetails,snippet",
-              "forHandle": "meridian.academy",
+              "part": "snippet,contentDetails",
+              "id": video_id,
               "key": key
           }
 
           r = requests.get(url, params=params, timeout=20)
           r.raise_for_status()
+
           data = r.json()
 
           if not data.get("items"):
-              raise SystemExit("Meridian Academy channel नहीं मिला")
+              raise SystemExit("Video नहीं मिला")
 
-          channel = data["items"][0]
-          channel_id = channel["id"]
-          uploads_playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+          video = data["items"][0]
 
-          print("CHANNEL:", channel["snippet"]["title"])
-          print("CHANNEL ID:", channel_id)
-          print("UPLOADS PLAYLIST:", uploads_playlist)
-          print("\nLATEST VIDEOS:\n")
+          snippet = video["snippet"]
 
-          url = "https://www.googleapis.com/youtube/v3/playlistItems"
-          params = {
-              "part": "snippet,contentDetails",
-              "playlistId": uploads_playlist,
-              "maxResults": 10,
-              "key": key
-          }
+          print("=" * 60)
+          print("VIDEO TITLE")
+          print(snippet.get("title", ""))
 
-          r = requests.get(url, params=params, timeout=20)
-          r.raise_for_status()
-          data = r.json()
+          print("\nPUBLISHED")
+          print(snippet.get("publishedAt", ""))
 
-          for i, item in enumerate(data.get("items", []), 1):
-              snippet = item["snippet"]
-              video_id = item["contentDetails"]["videoId"]
+          print("\nDESCRIPTION")
+          print(snippet.get("description", ""))
 
-              print(f"{i}. {snippet['title']}")
-              print(f"   Published: {snippet['publishedAt']}")
-              print(f"   URL: https://www.youtube.com/watch?v={video_id}")
-              print()
+          print("\nCHANNEL")
+          print(snippet.get("channelTitle", ""))
 
+          print("\nVIDEO URL")
+          print(f"https://www.youtube.com/watch?v={video_id}")
+
+          print("=" * 60)
           PY
