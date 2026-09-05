@@ -1,121 +1,56 @@
-name: Current Affairs AI Test
+name: YouTube Caption Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  process-current-affairs:
+  caption-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Get YouTube video and process with Gemini
+      - name: Check captions
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
-          import json
 
-          youtube_key = os.environ["YOUTUBE_API_KEY"]
-          gemini_key = os.environ["GEMINI_API_KEY"]
-
-          # Test video
           video_id = "u8HlUeD7r0A"
+          key = os.environ["YOUTUBE_API_KEY"]
 
-          # ---------- YouTube ----------
+          url = "https://www.googleapis.com/youtube/v3/captions"
+
           r = requests.get(
-              "https://www.googleapis.com/youtube/v3/videos",
+              url,
               params={
                   "part": "snippet",
-                  "id": video_id,
-                  "key": youtube_key
+                  "videoId": video_id,
+                  "key": key
               },
               timeout=20
           )
-          r.raise_for_status()
 
-          video = r.json()["items"][0]["snippet"]
+          print("HTTP STATUS:", r.status_code)
 
-          title = video.get("title", "")
-          description = video.get("description", "")
+          if r.status_code != 200:
+              print(r.text)
+              raise SystemExit(1)
 
-          print("VIDEO:", title)
+          data = r.json()
+          items = data.get("items", [])
 
-          # ---------- Gemini ----------
-          prompt = f"""
-          तुम राजस्थान प्रतियोगी परीक्षाओं के Current Affairs editor हो।
+          print("CAPTION TRACKS:", len(items))
 
-          नीचे YouTube video की उपलब्ध जानकारी दी गई है।
-
-          VIDEO TITLE:
-          {title}
-
-          VIDEO DESCRIPTION:
-          {description}
-
-          हमारा लक्ष्य:
-          1. केवल exam-worthy Rajasthan Current Affairs चुनो।
-          2. Rajasthan से संबंधित appointments, schemes, policies,
-             programmes, awards, sports, persons, places, events,
-             budget/economy, agriculture, education, health,
-             environment, industry, infrastructure, reports,
-             science & technology तथा AI/digital topics शामिल हो सकते हैं।
-          3. केवल सामान्य India/National news को शामिल मत करो,
-             जब तक वह Science & Technology के अंतर्गत न आती हो।
-          4. उपलब्ध जानकारी से बाहर कोई fact मत बनाओ।
-          5. अगर उपलब्ध जानकारी में Rajasthan/Science-Tech का
-             उपयोगी current affair नहीं है तो साफ लिखो: NO_RELEVANT_CA
-
-          Output केवल JSON में दो:
-
-          {{
-            "status": "OK या NO_RELEVANT_CA",
-            "items": [
-              {{
-                "category": "श्रेणी",
-                "question": "प्रश्न",
-                "answer": "उत्तर",
-                "explanation": "संक्षिप्त तथ्य"
-              }}
-            ]
-          }}
-          """
-
-          gemini_url = (
-              "https://generativelanguage.googleapis.com/v1beta/"
-              "models/gemini-3.5-flash:generateContent"
-          )
-
-          response = requests.post(
-              gemini_url,
-              params={"key": gemini_key},
-              headers={"Content-Type": "application/json"},
-              json={
-                  "contents": [
-                      {
-                          "parts": [
-                              {"text": prompt}
-                          ]
-                      }
-                  ],
-                  "generationConfig": {
-                      "temperature": 0.2
-                  }
-              },
-              timeout=60
-          )
-
-          response.raise_for_status()
-
-          result = response.json()
-
-          text = result["candidates"][0]["content"]["parts"][0]["text"]
-
-          print("\n========== GEMINI RESULT ==========\n")
-          print(text)
-          print("\n===================================\n")
+          if not items:
+              print("NO CAPTIONS AVAILABLE")
+          else:
+              for item in items:
+                  s = item["snippet"]
+                  print("LANGUAGE:", s.get("language"))
+                  print("NAME:", s.get("name"))
+                  print("TYPE:", s.get("trackKind"))
+                  print("CAPTION ID:", item.get("id"))
 
           PY
