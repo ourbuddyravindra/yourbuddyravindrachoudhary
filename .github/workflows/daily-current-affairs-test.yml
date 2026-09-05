@@ -1,20 +1,28 @@
-name: Current Affairs - Fact Extraction and MCQ
+name: Rajasthan Current Affairs - Complete Pipeline
 
 on:
-  push:
-    branches:
-      - main
+  schedule:
+    # रोज सुबह 6:00 AM IST
+    - cron: "30 0 * * *"
   workflow_dispatch:
 
+concurrency:
+  group: rajasthan-current-affairs
+  cancel-in-progress: false
+
 permissions:
-  contents: read
+  contents: write
+
+
+# ============================================================
+# JOB 1
+# DIPR → SUJAS PDF → OCR → VERIFIED FACTS
+# ============================================================
 
 jobs:
 
-  # ==================================================
-  # JOB 1: DIPR → OCR → VERIFIED FACTS
-  # ==================================================
   extract-facts:
+
     runs-on: ubuntu-latest
 
     steps:
@@ -30,26 +38,32 @@ jobs:
       - name: Install OCR tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y poppler-utils tesseract-ocr tesseract-ocr-hin tesseract-ocr-eng
+          sudo apt-get install -y \
+            poppler-utils \
+            tesseract-ocr \
+            tesseract-ocr-hin \
+            tesseract-ocr-eng
 
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
           pip install google-genai requests
 
-      # ==================================================
-      # DOWNLOAD SUJAS
-      # ==================================================
+      # --------------------------------------------------------
+      # DOWNLOAD LATEST SUJAS FROM DIPR
+      # --------------------------------------------------------
+
       - name: Download latest Sujas
         shell: python
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+
           import requests
           import json
           import sys
-          import re
-          from datetime import datetime
 
-          API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+          API_URL = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -85,11 +99,17 @@ jobs:
               "Type": "10"
           }
 
-          print("Calling DIPR API...")
+          headers = {
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0"
+          }
+
+          print("Fetching latest Sujas from DIPR...")
 
           response = requests.post(
-              API,
+              API_URL,
               json=payload,
+              headers=headers,
               timeout=60
           )
 
@@ -97,164 +117,204 @@ jobs:
 
           data = response.json()
 
-          def walk(obj):
+          # ----------------------------------------------------
+          # FIND FIRST VALID RESULT
+          # ----------------------------------------------------
+
+          def find_items(obj):
+
+              if isinstance(obj, list):
+                  return obj
+
               if isinstance(obj, dict):
-                  yield obj
+
+                  for key in [
+                      "Data",
+                      "data",
+                      "Result",
+                      "result",
+                      "Items",
+                      "items",
+                      "Records",
+                      "records"
+                  ]:
+
+                      value = obj.get(key)
+
+                      if isinstance(value, list):
+                          return value
+
                   for value in obj.values():
-                      yield from walk(value)
-              elif isinstance(obj, list):
-                  for value in obj:
-                      yield from walk(value)
 
-          candidates = []
+                      if isinstance(value, (dict, list)):
 
-          for item in walk(data):
+                          result = find_items(value)
+
+                          if result:
+                              return result
+
+              return []
+
+          items = find_items(data)
+
+          if not items:
+              print("ERROR: No Sujas records found.")
+              print(json.dumps(data, ensure_ascii=False)[:5000])
+              sys.exit(1)
+
+          latest = None
+
+          for item in items:
 
               if not isinstance(item, dict):
                   continue
 
-              title = str(
-                  item.get("Title") or ""
-              ).strip()
+              text = json.dumps(
+                  item,
+                  ensure_ascii=False
+              ).lower()
 
-              if "सुजस" not in title:
-                  continue
+              if "sujas" in text or "सुजस" in text:
+                  latest = item
+                  break
 
-              attachments = item.get(
-                  "AttachmentList"
-              )
+          if latest is None:
+              latest = items[0]
 
-              if not isinstance(
-                  attachments,
-                  list
-              ):
-                  continue
-
-              for attachment in attachments:
-
-                  if not isinstance(
-                      attachment,
-                      dict
-                  ):
-                      continue
-
-                  path = (
-                      attachment.get("Path")
-                      or attachment.get("path")
-                  )
-
-                  if not path:
-                      continue
-
-                  candidates.append({
-                      "id": item.get("Id"),
-                      "title": title,
-                      "date": item.get("Date"),
-                      "path": path,
-                      "attachment_name": attachment.get(
-                          "AttachmentsName"
-                      )
-                  })
-
-          print(
-              "Sujas candidates:",
-              len(candidates)
-          )
-
-          if not candidates:
-              print("ERROR: No Sujas PDF found.")
-              sys.exit(1)
-
-          def sort_key(item):
-
-              value = str(
-                  item.get("date") or ""
-              )
-
-              try:
-                  dt = datetime.fromisoformat(
-                      value.replace(
-                          "Z",
-                          "+00:00"
-                      )
-                  )
-                  timestamp = dt.timestamp()
-              except Exception:
-                  timestamp = 0
-
-              try:
-                  item_id = int(
-                      item.get("id") or 0
-                  )
-              except Exception:
-                  item_id = 0
-
-              return timestamp, item_id
-
-          candidates.sort(
-              key=sort_key,
-              reverse=True
-          )
-
-          selected = candidates[0]
-
-          pdf_url = str(
-              selected["path"]
-          ).strip()
-
-          match = re.search(
-              r"\]\((https?://[^)]+)\)",
-              pdf_url
-          )
-
-          if match:
-              pdf_url = match.group(1)
-
-          if not (
-              pdf_url.startswith("http://")
-              or
-              pdf_url.startswith("https://")
-          ):
-              print("ERROR: Invalid PDF URL")
-              print(pdf_url)
-              sys.exit(1)
-
-          selected["pdf_url"] = pdf_url
-
-          print()
-          print("========== SELECTED SUJAS ==========")
-
+          print("Latest record:")
           print(
               json.dumps(
-                  selected,
+                  latest,
                   ensure_ascii=False,
                   indent=2
-              )
+              )[:10000]
           )
 
-          print()
-          print("Downloading PDF...")
+          # ----------------------------------------------------
+          # FIND ORDER ID
+          # ----------------------------------------------------
 
-          pdf = requests.get(
+          order_id = (
+              latest.get("Id")
+              or latest.get("ID")
+              or latest.get("OrderId")
+              or latest.get("OrderID")
+              or latest.get("id")
+          )
+
+          if not order_id:
+              print("ERROR: Could not find order ID.")
+              sys.exit(1)
+
+          # ----------------------------------------------------
+          # FIND PDF URL
+          # ----------------------------------------------------
+
+          pdf_url = None
+
+          def find_pdf(obj):
+
+              if isinstance(obj, str):
+
+                  if obj.lower().endswith(".pdf"):
+                      return obj
+
+                  if ".pdf" in obj.lower():
+
+                      start = obj.lower().find("http")
+
+                      if start >= 0:
+                          return obj[start:].split('"')[0]
+
+              if isinstance(obj, dict):
+
+                  for key, value in obj.items():
+
+                      if isinstance(value, str):
+
+                          if ".pdf" in value.lower():
+
+                              start = value.lower().find("http")
+
+                              if start >= 0:
+                                  return value[start:]
+
+                      result = find_pdf(value)
+
+                      if result:
+                          return result
+
+              if isinstance(obj, list):
+
+                  for value in obj:
+
+                      result = find_pdf(value)
+
+                      if result:
+                          return result
+
+              return None
+
+          pdf_url = find_pdf(latest)
+
+          # Known DIPR file location pattern
+          if not pdf_url:
+
+              attachment_id = (
+                  latest.get("AttachmentId")
+                  or latest.get("AttachmentID")
+                  or latest.get("FileId")
+              )
+
+              if attachment_id:
+                  print(
+                      "Attachment ID found:",
+                      attachment_id
+                  )
+
+          if not pdf_url:
+
+              print("ERROR: PDF URL not found.")
+              sys.exit(1)
+
+          if not pdf_url.startswith("http"):
+              pdf_url = (
+                  "https://jankalyanfile.rajasthan.gov.in/"
+                  + pdf_url.lstrip("/")
+              )
+
+          print("PDF URL:")
+          print(pdf_url)
+
+          # ----------------------------------------------------
+          # DOWNLOAD PDF
+          # ----------------------------------------------------
+
+          pdf_response = requests.get(
               pdf_url,
-              timeout=180,
               headers={
                   "User-Agent": "Mozilla/5.0"
-              }
+              },
+              timeout=120
           )
 
-          pdf.raise_for_status()
+          pdf_response.raise_for_status()
 
-          content = pdf.content
+          content_type = pdf_response.headers.get(
+              "content-type",
+              ""
+          ).lower()
 
-          print(
-              "Downloaded bytes:",
-              len(content)
-          )
-
-          if not content.startswith(b"%PDF"):
+          if (
+              "pdf" not in content_type
+              and not pdf_response.content.startswith(b"%PDF")
+          ):
               print(
-                  "ERROR: Downloaded file is not PDF."
+                  "ERROR: Downloaded file is not a PDF."
+              )
+              print(
+                  "Content-Type:",
+                  content_type
               )
               sys.exit(1)
 
@@ -262,30 +322,54 @@ jobs:
               "sujas_today.pdf",
               "wb"
           ) as f:
-              f.write(content)
+
+              f.write(pdf_response.content)
+
+          # ----------------------------------------------------
+          # SAVE METADATA
+          # ----------------------------------------------------
+
+          metadata = {
+              "order_id": str(order_id),
+              "title": (
+                  latest.get("Title")
+                  or latest.get("title")
+                  or "Sujas"
+              ),
+              "date": (
+                  latest.get("Date")
+                  or latest.get("date")
+                  or ""
+              ),
+              "pdf_url": pdf_url
+          }
 
           with open(
               "sujas_metadata.json",
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
-                  selected,
+                  metadata,
                   f,
                   ensure_ascii=False,
                   indent=2
               )
 
-          print(
-              "SUCCESS: Sujas downloaded."
-          )
+          print()
+          print("Sujas downloaded successfully.")
+          print("Order ID:", order_id)
+          print("Size:", len(pdf_response.content))
 
-      # ==================================================
-      # PDF → JPG
-      # ==================================================
-      - name: Convert PDF to images
+
+      # --------------------------------------------------------
+      # PDF → IMAGES
+      # --------------------------------------------------------
+
+      - name: Convert PDF to page images
         run: |
-          rm -rf pages
+
           mkdir -p pages
 
           pdftoppm \
@@ -295,146 +379,175 @@ jobs:
             sujas_today.pdf \
             pages/page
 
-          echo "Generated pages:"
+          echo "PDF pages:"
           ls -lh pages/
 
-      # ==================================================
+
+      # --------------------------------------------------------
       # OCR
-      # ==================================================
-      - name: OCR pages
+      # --------------------------------------------------------
+
+      - name: OCR all pages
         shell: python
         run: |
-          import json
+
           import subprocess
-          import sys
-          from pathlib import Path
+          import glob
+          import os
 
           images = sorted(
-              Path("pages").glob("page-*.jpg")
+              glob.glob(
+                  "pages/page-*.jpg"
+              )
           )
 
           if not images:
               print("ERROR: No page images found.")
-              sys.exit(1)
+              raise SystemExit(1)
 
-          results = []
+          os.makedirs(
+              "ocr",
+              exist_ok=True
+          )
+
+          all_text = []
 
           for image in images:
 
-              try:
-                  page = int(
-                      image.stem.split("-")[-1]
+              page_name = os.path.basename(
+                  image
+              )
+
+              output_file = (
+                  "ocr/"
+                  + page_name.replace(
+                      ".jpg",
+                      ".txt"
                   )
-              except Exception:
-                  continue
+              )
 
               print(
-                  f"OCR page {page}..."
+                  "OCR:",
+                  page_name
               )
 
               result = subprocess.run(
                   [
                       "tesseract",
-                      str(image),
-                      "stdout",
+                      image,
+                      output_file[:-4],
                       "-l",
                       "hin+eng",
                       "--psm",
                       "3"
                   ],
                   capture_output=True,
-                  text=True,
-                  encoding="utf-8",
-                  errors="replace"
+                  text=True
               )
 
-              text = result.stdout.strip()
+              if result.returncode != 0:
 
-              results.append({
-                  "page": page,
-                  "text": text
-              })
+                  print(
+                      result.stderr
+                  )
 
-              print(
-                  f"Page {page}: "
-                  f"{len(text)} characters"
+              try:
+
+                  with open(
+                      output_file,
+                      "r",
+                      encoding="utf-8"
+                  ) as f:
+
+                      text = f.read()
+
+              except FileNotFoundError:
+
+                  text = ""
+
+              page_number = len(all_text) + 1
+
+              all_text.append(
+                  f"\n\n===== PAGE {page_number} =====\n\n"
+                  + text
               )
 
           with open(
-              "ocr_pages.json",
+              "ocr_all.txt",
               "w",
               encoding="utf-8"
           ) as f:
-              json.dump(
-                  results,
-                  f,
-                  ensure_ascii=False,
-                  indent=2
+
+              f.write(
+                  "".join(all_text)
               )
 
-          print()
-          print("OCR completed.")
           print(
-              "Total pages:",
-              len(results)
+              "OCR completed:",
+              len(images),
+              "pages"
           )
 
-      # ==================================================
-      # GEMINI FACT EXTRACTION
-      # ==================================================
-      - name: Extract verified facts
+
+      # --------------------------------------------------------
+      # GEMINI → VERIFIED FACTS
+      # --------------------------------------------------------
+
+      - name: Extract verified facts with Gemini
         shell: python
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.5-flash-lite
         run: |
+
           import os
           import json
+          import glob
           import time
-          import sys
 
           from google import genai
           from google.genai import types
 
-          api_key = os.environ.get(
-              "GEMINI_API_KEY"
-          )
-
-          model = os.environ.get(
-              "GEMINI_MODEL",
-              "gemini-3.5-flash-lite"
-          )
-
-          if not api_key:
-              print(
-                  "ERROR: GEMINI_API_KEY missing."
-              )
-              sys.exit(1)
 
           client = genai.Client(
-              api_key=api_key
+              api_key=os.environ["GEMINI_API_KEY"]
           )
 
+
+          images = sorted(
+              glob.glob(
+                  "pages/page-*.jpg"
+              )
+          )
+
+
+          all_facts = []
+
+
           schema = {
-              "type": "object",
+              "type": "OBJECT",
               "properties": {
                   "facts": {
-                      "type": "array",
+                      "type": "ARRAY",
                       "items": {
-                          "type": "object",
+                          "type": "OBJECT",
                           "properties": {
+
                               "fact": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "category": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "page": {
-                                  "type": "integer"
+                                  "type": "INTEGER"
                               },
+
                               "evidence": {
-                                  "type": "string"
+                                  "type": "STRING"
                               }
+
                           },
                           "required": [
                               "fact",
@@ -450,204 +563,238 @@ jobs:
               ]
           }
 
-          with open(
-              "ocr_pages.json",
-              "r",
-              encoding="utf-8"
-          ) as f:
-              pages = json.load(f)
 
-          all_facts = []
+          prompt = """
+          तुम राजस्थान प्रतियोगी परीक्षाओं के लिए
+          Current Affairs Fact Extractor हो।
 
-          for page_data in pages:
+          दिए गए Sujas पृष्ठ से केवल वही facts निकालो
+          जो वास्तव में पृष्ठ पर मौजूद हैं।
 
-              page = int(
-                  page_data["page"]
+          कोई अनुमान, सामान्य ज्ञान या बाहरी जानकारी मत जोड़ो।
+
+          विशेष रूप से exam-worthy facts खोजो:
+
+          1. नियुक्तियाँ
+          2. योजनाएँ
+          3. नीतियाँ
+          4. कार्यक्रम
+          5. पुरस्कार
+          6. खेल
+          7. व्यक्ति
+          8. स्थान
+          9. महत्वपूर्ण घटनाएँ
+          10. बजट/अर्थव्यवस्था
+          11. कृषि
+          12. शिक्षा
+          13. स्वास्थ्य
+          14. पर्यावरण
+          15. उद्योग/निवेश
+          16. आधारभूत संरचना
+          17. रिपोर्ट/इंडेक्स
+          18. विज्ञान/तकनीक
+          19. AI/Digital
+          20. अन्य परीक्षा-योग्य तथ्य
+
+          हर fact के साथ:
+
+          - fact
+          - category
+          - exact page number
+          - पृष्ठ से छोटा evidence text
+
+          जरूरी:
+          यदि कोई तथ्य पृष्ठ पर स्पष्ट नहीं है
+          तो उसे बिल्कुल मत बनाओ।
+
+          एक ही तथ्य को दो बार मत दो।
+          """
+
+
+          for index, image in enumerate(
+              images,
+              1
+          ):
+
+              print()
+              print(
+                  "Processing page:",
+                  index
               )
 
-              text = str(
-                  page_data.get(
-                      "text",
-                      ""
-                  )
-              ).strip()
 
-              if not text:
-                  continue
-
-              prompt = (
-                  "You are an exam-oriented Rajasthan current "
-                  "affairs fact extractor. "
-                  "Use ONLY the supplied OCR text. "
-                  "Do not use internet, memory, general knowledge "
-                  "or outside information. "
-                  "Extract important exam-oriented facts only. "
-                  "Do not create MCQs. "
-                  "Do not create options. "
-                  "Do not create answers. "
-                  "Do not invent unclear information. "
-                  "Every fact must belong to page "
-                  + str(page)
-                  + ". "
-                  "Every fact must have short evidence from the "
-                  "OCR text. "
-                  "Prioritize appointments, persons, schemes, "
-                  "programmes, policies, administration, elections, "
-                  "education, health, agriculture, sports, awards, "
-                  "economy, budget, environment, science, technology, "
-                  "infrastructure, districts, places, institutions, "
-                  "statistics and important dates. "
-                  "Return Hindi facts when the source is Hindi. "
-                  "PAGE "
-                  + str(page)
-                  + " OCR: "
-                  + text
+              ocr_file = (
+                  "ocr/page-"
+                  + str(index).zfill(6)
+                  + ".txt"
               )
+
+
+              ocr_text = ""
+
+
+              if os.path.exists(
+                  ocr_file
+              ):
+
+                  with open(
+                      ocr_file,
+                      "r",
+                      encoding="utf-8"
+                  ) as f:
+
+                      ocr_text = f.read()
+
+
+              image_part = types.Part.from_bytes(
+                  data=open(
+                      image,
+                      "rb"
+                  ).read(),
+                  mime_type="image/jpeg"
+              )
+
+
+              page_prompt = (
+                  prompt
+                  + "\n\nPAGE NUMBER: "
+                  + str(index)
+                  + "\n\nOCR TEXT:\n"
+                  + ocr_text[:30000]
+              )
+
 
               success = False
 
-              for attempt in range(4):
+
+              for attempt in range(1, 6):
 
                   try:
 
                       response = client.models.generate_content(
-                          model=model,
-                          contents=prompt,
+                          model="gemini-3.5-flash-lite",
+                          contents=[
+                              types.Content(
+                                  role="user",
+                                  parts=[
+                                      types.Part.from_text(
+                                          text=page_prompt
+                                      ),
+                                      image_part
+                                  ]
+                              )
+                          ],
                           config=types.GenerateContentConfig(
+                              temperature=0,
                               response_mime_type="application/json",
                               response_schema=schema
                           )
                       )
 
-                      if not response.text:
-                          raise RuntimeError(
-                              "Empty Gemini response"
-                          )
 
-                      data = json.loads(
+                      result = json.loads(
                           response.text
                       )
 
-                      facts = data.get(
+
+                      facts = result.get(
                           "facts",
                           []
                       )
 
-                      valid = []
 
-                      for item in facts:
+                      for fact in facts:
 
-                          if not isinstance(
-                              item,
-                              dict
+                          fact["page"] = index
+
+                          if (
+                              fact.get("fact")
+                              and fact.get("evidence")
                           ):
-                              continue
 
-                          fact = str(
-                              item.get(
-                                  "fact",
-                                  ""
+                              all_facts.append(
+                                  fact
                               )
-                          ).strip()
 
-                          category = str(
-                              item.get(
-                                  "category",
-                                  ""
-                              )
-                          ).strip()
-
-                          evidence = str(
-                              item.get(
-                                  "evidence",
-                                  ""
-                              )
-                          ).strip()
-
-                          try:
-                              item_page = int(
-                                  item.get(
-                                      "page",
-                                      page
-                                  )
-                              )
-                          except Exception:
-                              item_page = page
-
-                          if not fact:
-                              continue
-
-                          if not evidence:
-                              continue
-
-                          if item_page != page:
-                              continue
-
-                          valid.append({
-                              "fact": fact,
-                              "category": category,
-                              "page": page,
-                              "evidence": evidence
-                          })
-
-                      all_facts.extend(valid)
 
                       print(
-                          f"Page {page}: "
-                          f"{len(valid)} facts"
+                          "Facts found:",
+                          len(facts)
                       )
+
 
                       success = True
                       break
 
-                  except Exception as error:
+
+                  except Exception as e:
 
                       print(
-                          f"Gemini attempt {attempt + 1}: "
-                          f"{error}"
+                          "Gemini attempt",
+                          attempt,
+                          "failed:",
+                          str(e)
                       )
 
-                      if attempt < 3:
-                          time.sleep(
+                      time.sleep(
+                          min(
+                              30,
                               2 ** attempt
                           )
+                      )
+
 
               if not success:
+
                   print(
-                      f"WARNING: Page {page} failed."
+                      "WARNING: Page",
+                      index,
+                      "could not be processed."
                   )
 
-          # ==========================================
-          # DEDUPLICATE
-          # ==========================================
+
+          # ----------------------------------------------------
+          # DEDUPLICATION
+          # ----------------------------------------------------
+
           unique = []
+
           seen = set()
 
-          for item in all_facts:
+
+          for fact in all_facts:
 
               key = (
-                  item["fact"]
+                  fact.get("fact", "")
                   .strip()
                   .lower()
               )
+
+              if not key:
+                  continue
 
               if key in seen:
                   continue
 
               seen.add(key)
-              unique.append(item)
+
+              unique.append(
+                  fact
+              )
+
 
           output = {
-              "source": "Rajasthan Sujas",
-              "facts_count": len(unique),
+              "total_facts": len(unique),
               "facts": unique
           }
+
 
           with open(
               "verified_facts.json",
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
                   output,
                   f,
@@ -655,15 +802,24 @@ jobs:
                   indent=2
               )
 
+
           print()
           print(
-              "TOTAL VERIFIED FACTS:",
+              "======================================"
+          )
+          print(
+              "VERIFIED FACTS:",
               len(unique)
           )
+          print(
+              "======================================"
+          )
 
-      # ==================================================
+
+      # --------------------------------------------------------
       # UPLOAD FACTS
-      # ==================================================
+      # --------------------------------------------------------
+
       - name: Upload verified facts
         uses: actions/upload-artifact@v4
         with:
@@ -671,13 +827,19 @@ jobs:
           path: |
             verified_facts.json
             sujas_metadata.json
+            sujas_today.pdf
+            ocr_all.txt
 
 
-  # ==================================================
-  # JOB 2: VERIFIED FACTS → MCQs
-  # ==================================================
+# ============================================================
+# JOB 2
+# VERIFIED FACTS → MCQs
+# ============================================================
+
   generate-mcqs:
+
     needs: extract-facts
+
     runs-on: ubuntu-latest
 
     steps:
@@ -694,87 +856,75 @@ jobs:
 
       - name: Install Gemini package
         run: |
-          python -m pip install --upgrade pip
           pip install google-genai
 
-      # ==================================================
-      # GEMINI MCQ GENERATION
-      # ==================================================
       - name: Generate MCQs
         shell: python
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.5-flash-lite
         run: |
+
           import os
           import json
           import time
-          import sys
 
           from google import genai
           from google.genai import types
 
-          api_key = os.environ.get(
-              "GEMINI_API_KEY"
-          )
-
-          model = os.environ.get(
-              "GEMINI_MODEL",
-              "gemini-3.5-flash-lite"
-          )
-
-          if not api_key:
-              print(
-                  "ERROR: GEMINI_API_KEY missing."
-              )
-              sys.exit(1)
-
-          client = genai.Client(
-              api_key=api_key
-          )
 
           with open(
               "verified_facts.json",
               "r",
               encoding="utf-8"
           ) as f:
-              source = json.load(f)
 
-          facts = source.get(
+              data = json.load(f)
+
+
+          facts = data.get(
               "facts",
               []
           )
 
+
           print(
-              "Facts received:",
+              "Verified facts:",
               len(facts)
           )
 
+
+          client = genai.Client(
+              api_key=os.environ["GEMINI_API_KEY"]
+          )
+
+
           schema = {
-              "type": "object",
+              "type": "OBJECT",
               "properties": {
                   "mcqs": {
-                      "type": "array",
+                      "type": "ARRAY",
                       "items": {
-                          "type": "object",
+                          "type": "OBJECT",
                           "properties": {
+
                               "question": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "options": {
-                                  "type": "object",
+                                  "type": "OBJECT",
                                   "properties": {
                                       "A": {
-                                          "type": "string"
+                                          "type": "STRING"
                                       },
                                       "B": {
-                                          "type": "string"
+                                          "type": "STRING"
                                       },
                                       "C": {
-                                          "type": "string"
+                                          "type": "STRING"
                                       },
                                       "D": {
-                                          "type": "string"
+                                          "type": "STRING"
                                       }
                                   },
                                   "required": [
@@ -784,22 +934,29 @@ jobs:
                                       "D"
                                   ]
                               },
+
                               "answer": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "explanation": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "category": {
-                                  "type": "string"
+                                  "type": "STRING"
                               },
+
                               "page": {
-                                  "type": "integer"
+                                  "type": "INTEGER"
                               },
+
                               "evidence": {
-                                  "type": "string"
+                                  "type": "STRING"
                               }
+
                           },
+
                           "required": [
                               "question",
                               "options",
@@ -812,228 +969,226 @@ jobs:
                       }
                   }
               },
+
               "required": [
                   "mcqs"
               ]
           }
 
+
+          prompt = """
+          तुम Rajasthan competitive exams
+          के लिए professional MCQ creator हो।
+
+          नीचे केवल VERIFIED FACTS दिए गए हैं।
+
+          प्रत्येक महत्वपूर्ण fact से अधिकतम एक
+          अच्छा exam-oriented MCQ बनाओ।
+
+          नियम:
+
+          1. केवल दिए गए facts का उपयोग करो।
+          2. कोई बाहरी जानकारी मत जोड़ो।
+          3. प्रश्न हिंदी में हो।
+          4. चार options A, B, C, D हों।
+          5. केवल एक सही उत्तर हो।
+          6. Answer केवल A/B/C/D में हो।
+          7. Explanation छोटा लेकिन स्पष्ट हो।
+          8. Category वही रखो।
+          9. Page number वही रखो।
+          10. Evidence वही fact-supporting text रखो।
+          11. प्रश्न RPSC/RSSB/RAS/REET जैसे
+             competitive exams के स्तर का हो।
+          12. बहुत आसान या filler प्रश्न मत बनाओ।
+          """
+
+
+          # Large input को manageable batches में भेजना
+          batch_size = 20
+
+
           all_mcqs = []
 
-          for fact_index, fact_data in enumerate(
-              facts,
-              1
+
+          for start in range(
+              0,
+              len(facts),
+              batch_size
           ):
 
-              fact = str(
-                  fact_data.get(
-                      "fact",
-                      ""
-                  )
-              ).strip()
+              batch = facts[
+                  start:start + batch_size
+              ]
 
-              category = str(
-                  fact_data.get(
-                      "category",
-                      ""
-                  )
-              ).strip()
 
-              page = int(
-                  fact_data.get(
-                      "page",
-                      0
-                  )
-              )
-
-              evidence = str(
-                  fact_data.get(
-                      "evidence",
-                      ""
-                  )
-              ).strip()
-
-              if not fact:
-                  continue
-
-              print()
               print(
-                  f"Generating MCQ {fact_index}..."
+                  "Generating MCQs for facts",
+                  start + 1,
+                  "to",
+                  start + len(batch)
               )
 
-              prompt = (
-                  "You are an expert Rajasthan competitive "
-                  "examination MCQ creator. "
-                  "Create exactly ONE high-quality MCQ from "
-                  "the supplied VERIFIED FACT. "
-                  "Use only the supplied fact and evidence. "
-                  "Do not add outside information. "
-                  "The question must be in Hindi. "
-                  "Create four plausible options A, B, C and D. "
-                  "Exactly one option must be correct. "
-                  "The answer field must contain only A, B, C or D. "
-                  "Explanation must be short and based only on "
-                  "the supplied fact. "
-                  "Keep the original category, page and evidence. "
-                  "VERIFIED FACT: "
-                  + fact
-                  + " CATEGORY: "
-                  + category
-                  + " PAGE: "
-                  + str(page)
-                  + " EVIDENCE: "
-                  + evidence
+
+              batch_prompt = (
+                  prompt
+                  + "\n\nVERIFIED FACTS:\n"
+                  + json.dumps(
+                      batch,
+                      ensure_ascii=False,
+                      indent=2
+                  )
               )
+
 
               success = False
 
-              for attempt in range(4):
+
+              for attempt in range(1, 6):
 
                   try:
 
                       response = client.models.generate_content(
-                          model=model,
-                          contents=prompt,
+                          model="gemini-3.5-flash-lite",
+                          contents=batch_prompt,
                           config=types.GenerateContentConfig(
+                              temperature=0.2,
                               response_mime_type="application/json",
                               response_schema=schema
                           )
                       )
 
-                      if not response.text:
-                          raise RuntimeError(
-                              "Empty Gemini response"
-                          )
 
-                      data = json.loads(
+                      result = json.loads(
                           response.text
                       )
 
-                      mcqs = data.get(
+
+                      mcqs = result.get(
                           "mcqs",
                           []
                       )
 
-                      for mcq in mcqs:
 
-                          if not isinstance(
-                              mcq,
-                              dict
-                          ):
-                              continue
+                      all_mcqs.extend(
+                          mcqs
+                      )
 
-                          question = str(
-                              mcq.get(
-                                  "question",
-                                  ""
-                              )
-                          ).strip()
 
-                          options = mcq.get(
-                              "options",
-                              {}
-                          )
+                      print(
+                          "MCQs generated:",
+                          len(mcqs)
+                      )
 
-                          answer = str(
-                              mcq.get(
-                                  "answer",
-                                  ""
-                              )
-                          ).strip().upper()
-
-                          explanation = str(
-                              mcq.get(
-                                  "explanation",
-                                  ""
-                              )
-                          ).strip()
-
-                          if not question:
-                              continue
-
-                          if not isinstance(
-                              options,
-                              dict
-                          ):
-                              continue
-
-                          if not all(
-                              key in options
-                              for key in [
-                                  "A",
-                                  "B",
-                                  "C",
-                                  "D"
-                              ]
-                          ):
-                              continue
-
-                          if answer not in [
-                              "A",
-                              "B",
-                              "C",
-                              "D"
-                          ]:
-                              continue
-
-                          if not explanation:
-                              continue
-
-                          all_mcqs.append({
-                              "question": question,
-                              "options": {
-                                  "A": str(
-                                      options["A"]
-                                  ),
-                                  "B": str(
-                                      options["B"]
-                                  ),
-                                  "C": str(
-                                      options["C"]
-                                  ),
-                                  "D": str(
-                                      options["D"]
-                                  )
-                              },
-                              "answer": answer,
-                              "explanation": explanation,
-                              "category": category,
-                              "page": page,
-                              "evidence": evidence
-                          })
 
                       success = True
                       break
 
-                  except Exception as error:
+
+                  except Exception as e:
 
                       print(
-                          f"MCQ attempt {attempt + 1}: "
-                          f"{error}"
+                          "Gemini attempt",
+                          attempt,
+                          "failed:",
+                          str(e)
                       )
 
-                      if attempt < 3:
-                          time.sleep(
+                      time.sleep(
+                          min(
+                              30,
                               2 ** attempt
                           )
+                      )
+
 
               if not success:
 
                   print(
-                      f"WARNING: MCQ failed for fact "
-                      f"{fact_index}"
+                      "WARNING: batch failed."
                   )
 
+
+          # ----------------------------------------------------
+          # VALIDATION
+          # ----------------------------------------------------
+
+          valid = []
+
+
+          for mcq in all_mcqs:
+
+              question = str(
+                  mcq.get(
+                      "question",
+                      ""
+                  )
+              ).strip()
+
+
+              options = mcq.get(
+                  "options",
+                  {}
+              )
+
+
+              answer = str(
+                  mcq.get(
+                      "answer",
+                      ""
+                  )
+              ).strip().upper()
+
+
+              if not question:
+                  continue
+
+
+              if answer not in [
+                  "A",
+                  "B",
+                  "C",
+                  "D"
+              ]:
+                  continue
+
+
+              if not all(
+                  str(
+                      options.get(
+                          x,
+                          ""
+                      )
+                  ).strip()
+                  for x in [
+                      "A",
+                      "B",
+                      "C",
+                      "D"
+                  ]
+              ):
+                  continue
+
+
+              mcq["answer"] = answer
+
+
+              valid.append(
+                  mcq
+              )
+
+
           output = {
-              "source": "Rajasthan Sujas",
-              "mcqs_count": len(all_mcqs),
-              "mcqs": all_mcqs
+              "total_mcqs": len(valid),
+              "mcqs": valid
           }
+
 
           with open(
               "current_affairs.json",
               "w",
               encoding="utf-8"
           ) as f:
+
               json.dump(
                   output,
                   f,
@@ -1041,26 +1196,478 @@ jobs:
                   indent=2
               )
 
+
           print()
           print(
-              "========================================"
+              "======================================"
           )
           print(
-              "TOTAL MCQs:",
-              len(all_mcqs)
+              "FINAL MCQs:",
+              len(valid)
           )
           print(
-              "========================================"
+              "======================================"
           )
 
-      # ==================================================
+
+      # --------------------------------------------------------
       # UPLOAD FINAL MCQs
-      # ==================================================
-      - name: Upload final current affairs
+      # --------------------------------------------------------
+
+      - name: Upload final MCQs
         uses: actions/upload-artifact@v4
         with:
           name: current-affairs-mcqs
           path: |
             current_affairs.json
-            verified_facts.json
             sujas_metadata.json
+
+
+# ============================================================
+# JOB 3
+# MCQs → TELEGRAM
+# ============================================================
+
+  publish-telegram:
+
+    needs: generate-mcqs
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download final MCQs
+        uses: actions/download-artifact@v5
+        with:
+          name: current-affairs-mcqs
+
+      - name: Publish MCQs to Telegram
+        shell: python
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: "@yourbuddyravindrachoudhary"
+        run: |
+
+          import os
+          import json
+          import requests
+          import sys
+          import time
+
+
+          token = os.environ.get(
+              "TELEGRAM_BOT_TOKEN"
+          )
+
+
+          channel = os.environ.get(
+              "TELEGRAM_CHANNEL"
+          )
+
+
+          if not token:
+
+              print(
+                  "ERROR: CURRENT_AFFAIRS_BOT_TOKEN missing."
+              )
+
+              sys.exit(1)
+
+
+          if not channel:
+
+              print(
+                  "ERROR: Telegram channel missing."
+              )
+
+              sys.exit(1)
+
+
+          api = (
+              "https://api.telegram.org/bot"
+              + token
+          )
+
+
+          # ----------------------------------------------------
+          # CHECK BOT
+          # ----------------------------------------------------
+
+          response = requests.get(
+              api + "/getMe",
+              timeout=30
+          )
+
+
+          response.raise_for_status()
+
+
+          bot_data = response.json()
+
+
+          if not bot_data.get("ok"):
+
+              print(
+                  "Telegram authentication failed."
+              )
+
+              print(
+                  bot_data
+              )
+
+              sys.exit(1)
+
+
+          print(
+              "Bot:",
+              bot_data["result"].get(
+                  "username"
+              )
+          )
+
+
+          # ----------------------------------------------------
+          # LOAD DATA
+          # ----------------------------------------------------
+
+          with open(
+              "current_affairs.json",
+              "r",
+              encoding="utf-8"
+          ) as f:
+
+              data = json.load(f)
+
+
+          with open(
+              "sujas_metadata.json",
+              "r",
+              encoding="utf-8"
+          ) as f:
+
+              metadata = json.load(f)
+
+
+          mcqs = data.get(
+              "mcqs",
+              []
+          )
+
+
+          order_id = str(
+              metadata.get(
+                  "order_id",
+                  ""
+              )
+          )
+
+
+          sujas_date = str(
+              metadata.get(
+                  "date",
+                  ""
+              )
+          )
+
+
+          sujas_title = str(
+              metadata.get(
+                  "title",
+                  "Sujas"
+              )
+          )
+
+
+          print(
+              "Sujas:",
+              sujas_title
+          )
+
+
+          print(
+              "Order ID:",
+              order_id
+          )
+
+
+          print(
+              "MCQs:",
+              len(mcqs)
+          )
+
+
+          if not mcqs:
+
+              print(
+                  "ERROR: No MCQs generated."
+              )
+
+              sys.exit(1)
+
+
+          # ----------------------------------------------------
+          # DUPLICATE PROTECTION
+          # ----------------------------------------------------
+
+          state_file = (
+              "posted_current_affairs.txt"
+          )
+
+
+          posted = set()
+
+
+          if os.path.exists(
+              state_file
+          ):
+
+              with open(
+                  state_file,
+                  "r",
+                  encoding="utf-8"
+              ) as f:
+
+                  for line in f:
+
+                      line = line.strip()
+
+                      if line:
+                          posted.add(line)
+
+
+          if order_id and order_id in posted:
+
+              print(
+                  "This Sujas is already posted."
+              )
+
+              print(
+                  "Telegram posting skipped."
+              )
+
+              sys.exit(0)
+
+
+          # ----------------------------------------------------
+          # SEND HEADER
+          # ----------------------------------------------------
+
+          header = (
+              "🇮🇳 राजस्थान करेंट अफेयर्स\n\n"
+              "📚 आज के महत्वपूर्ण प्रश्न\n"
+              "━━━━━━━━━━━━━━━━━━\n\n"
+              f"📰 {sujas_title}\n\n"
+              "🎯 RPSC | RSSB | RAS | REET"
+          )
+
+
+          response = requests.post(
+              api + "/sendMessage",
+              json={
+                  "chat_id": channel,
+                  "text": header
+              },
+              timeout=30
+          )
+
+
+          result = response.json()
+
+
+          if not result.get("ok"):
+
+              print(
+                  "Telegram header error:"
+              )
+
+              print(
+                  result
+              )
+
+              sys.exit(1)
+
+
+          print(
+              "Header sent."
+          )
+
+
+          # ----------------------------------------------------
+          # SEND EACH MCQ
+          # ----------------------------------------------------
+
+          sent = 0
+
+
+          for index, mcq in enumerate(
+              mcqs,
+              1
+          ):
+
+              question = str(
+                  mcq.get(
+                      "question",
+                      ""
+                  )
+              ).strip()
+
+
+              options = mcq.get(
+                  "options",
+                  {}
+              )
+
+
+              answer = str(
+                  mcq.get(
+                      "answer",
+                      ""
+                  )
+              ).strip().upper()
+
+
+              explanation = str(
+                  mcq.get(
+                      "explanation",
+                      ""
+                  )
+              ).strip()
+
+
+              category = str(
+                  mcq.get(
+                      "category",
+                      ""
+                  )
+              ).strip()
+
+
+              page = str(
+                  mcq.get(
+                      "page",
+                      ""
+                  )
+              ).strip()
+
+
+              if not question:
+                  continue
+
+
+              text = (
+                  f"📝 प्रश्न {index}\n\n"
+                  f"{question}\n\n"
+                  f"🅰️ {options.get('A', '')}\n"
+                  f"🅱️ {options.get('B', '')}\n"
+                  f"🅲 {options.get('C', '')}\n"
+                  f"🅳 {options.get('D', '')}\n\n"
+                  f"✅ उत्तर: {answer}\n\n"
+                  f"💡 व्याख्या: {explanation}\n\n"
+                  f"📌 श्रेणी: {category}\n"
+                  f"📄 स्रोत: Sujas पृष्ठ {page}"
+              )
+
+
+              # Telegram maximum text length protection
+              if len(text) > 4096:
+
+                  text = text[:4050] + "..."
+
+
+              response = requests.post(
+                  api + "/sendMessage",
+                  json={
+                      "chat_id": channel,
+                      "text": text
+                  },
+                  timeout=30
+              )
+
+
+              result = response.json()
+
+
+              if not result.get("ok"):
+
+                  print(
+                      "Telegram error on MCQ",
+                      index
+                  )
+
+                  print(
+                      result
+                  )
+
+                  sys.exit(1)
+
+
+              sent += 1
+
+
+              print(
+                  f"MCQ {index} sent."
+              )
+
+
+              time.sleep(1)
+
+
+          # ----------------------------------------------------
+          # SAVE POSTED ID
+          # ----------------------------------------------------
+
+          if order_id:
+
+              with open(
+                  state_file,
+                  "a",
+                  encoding="utf-8"
+              ) as f:
+
+                  f.write(
+                      order_id + "\n"
+                  )
+
+
+          print()
+          print(
+              "=========================================="
+          )
+
+          print(
+              "TELEGRAM PUBLISH SUCCESS"
+          )
+
+          print(
+              "MCQs sent:",
+              sent
+          )
+
+          print(
+              "Sujas Order ID:",
+              order_id
+          )
+
+          print(
+              "==========================================")
+
+
+      # --------------------------------------------------------
+      # COMMIT DUPLICATE-PROTECTION STATE
+      # --------------------------------------------------------
+
+      - name: Save Telegram posting state
+        run: |
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add posted_current_affairs.txt
+
+          git diff --cached --quiet || \
+            git commit -m "Update current affairs posting state"
+
+          git push
