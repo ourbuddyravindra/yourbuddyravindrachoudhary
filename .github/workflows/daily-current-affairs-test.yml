@@ -1,94 +1,24 @@
-name: Meridian Auto Collector
+name: Meridian Rajasthan Video Test
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '30 * * * *'
-
-permissions:
-  contents: write
 
 jobs:
-  collect:
+  test:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Collect latest Meridian videos
-        env:
-          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+      - name: Install tools
         run: |
-          python - <<'PY'
-          import os
-          import json
-          import requests
-          from pathlib import Path
+          python -m pip install --upgrade pip
+          pip install yt-dlp
 
-          KEY = os.environ["YOUTUBE_API_KEY"]
-
-          # Meridian Academy
-          r = requests.get(
-              "https://www.googleapis.com/youtube/v3/channels",
-              params={
-                  "part": "contentDetails",
-                  "forHandle": "meridian.academy",
-                  "key": KEY
-              },
-              timeout=20
-          )
-          r.raise_for_status()
-
-          channel = r.json()["items"][0]
-          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
-
-          r = requests.get(
-              "https://www.googleapis.com/youtube/v3/playlistItems",
-              params={
-                  "part": "snippet,contentDetails",
-                  "playlistId": uploads,
-                  "maxResults": 10,
-                  "key": KEY
-              },
-              timeout=20
-          )
-          r.raise_for_status()
-
-          videos = []
-
-          for item in r.json().get("items", []):
-              s = item["snippet"]
-              video_id = item["contentDetails"]["videoId"]
-
-              videos.append({
-                  "video_id": video_id,
-                  "title": s.get("title", ""),
-                  "published": s.get("publishedAt", ""),
-                  "description": s.get("description", ""),
-                  "url": f"https://www.youtube.com/watch?v={video_id}"
-              })
-
-          Path("meridian_latest.json").write_text(
-              json.dumps(videos, ensure_ascii=False, indent=2),
-              encoding="utf-8"
-          )
-
-          print(f"Found {len(videos)} latest videos")
-
-          for v in videos:
-              print(v["published"], "|", v["title"])
-              print(v["url"])
-
-          PY
-
-      - name: Save result
+      - name: Get video information
         run: |
-          git config user.name "github-actions"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add meridian_latest.json
-
-          git diff --cached --quiet || git commit -m "Update Meridian videos"
-          git push
+          yt-dlp \
+            --skip-download \
+            --write-description \
+            --print "%(title)s" \
+            --print "%(description)s" \
+            "https://www.youtube.com/watch?v=x8IoUpU6ifs"
