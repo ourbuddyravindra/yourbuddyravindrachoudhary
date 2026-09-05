@@ -10,7 +10,7 @@ jobs:
     steps:
       - name: Install packages
         run: |
-          pip install -U google-genai requests
+          pip install -U google-genai
 
       - name: Generate Current Affairs
         env:
@@ -19,45 +19,118 @@ jobs:
           python - <<'PY'
           from google import genai
           import os
+          import time
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
-          today = datetime.now(ZoneInfo("Asia/Kolkata")).strftime("%d-%m-%Y")
+          today = datetime.now(
+              ZoneInfo("Asia/Kolkata")
+          ).strftime("%d-%m-%Y")
 
-          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          client = genai.Client(
+              api_key=os.environ["GEMINI_API_KEY"]
+          )
 
           prompt = f"""
           आज की तारीख {today} है।
 
-          राजस्थान प्रतियोगी परीक्षाओं के लिए आज के Current Affairs तैयार करो।
+          राजस्थान प्रतियोगी परीक्षाओं के लिए CURRENT AFFAIRS तैयार करो।
 
-          केवल इन 2 categories में सामग्री दो:
+          केवल दो categories रखो:
 
-          1. राजस्थान Current Affairs
-          2. Science & Technology
+          🏜️ राजस्थान करेंट अफेयर्स
+          💻 विज्ञान एवं प्रौद्योगिकी
 
           STRICT RULES:
-          - आज की तारीख को ध्यान में रखो।
-          - केवल हाल की और exam-relevant घटनाएँ शामिल करो।
-          - Rajasthan category में खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
-          - Technology category में केवल महत्वपूर्ण Science & Technology/AI/Space/Digital/Cyber developments शामिल करो।
-          - सामान्य India news, politics, entertainment, सामान्य मौसम आदि शामिल मत करो।
-          - बेकार या कम महत्व की खबरें जोड़कर संख्या बढ़ाने की कोशिश मत करो।
-          - यदि किसी category में कोई genuinely important खबर नहीं है तो उसे खाली छोड़ दो।
-          - तथ्य गढ़ना बिल्कुल नहीं है।
-          - हर item के साथ source और source date दो।
-          - Hindi में सरल, परीक्षा-उपयोगी भाषा रखो।
-          - प्रत्येक महत्वपूर्ण news से 1 MCQ बनाओ।
-          - पहले facts, फिर MCQs दो।
+
+          1. आज की तारीख को ध्यान में रखो।
+          2. केवल हाल की और परीक्षा-उपयोगी घटनाएँ शामिल करो।
+          3. राजस्थान category की खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
+          4. Technology category में AI, Space, ISRO,
+             Digital Technology, Cyber, Science और महत्वपूर्ण
+             technological developments शामिल किए जा सकते हैं।
+          5. सामान्य India politics/news शामिल मत करो।
+          6. Entertainment, celebrity, सामान्य मौसम आदि शामिल मत करो।
+          7. सिर्फ संख्या बढ़ाने के लिए कमजोर खबरें मत जोड़ो।
+          8. अगर कोई महत्वपूर्ण खबर नहीं है तो category खाली रखो।
+          9. कोई fact invent मत करो।
+          10. प्रत्येक खबर के साथ source और source date दो।
+          11. Hindi में concise और exam-oriented भाषा रखो।
+          12. महत्वपूर्ण facts के बाद MCQ बनाओ।
+          13. MCQ का सही उत्तर स्पष्ट रूप से बताओ।
+          14. आज की तारीख से असंगत पुरानी खबर को current
+              affair के रूप में प्रस्तुत मत करो।
+
+          OUTPUT FORMAT:
+
+          📅 करेंट अफेयर्स — {today}
+
+          🏜️ राजस्थान करेंट अफेयर्स
+
+          1. शीर्षक
+          • मुख्य तथ्य:
+          • परीक्षा उपयोगी तथ्य:
+          • स्रोत:
+          • स्रोत तारीख:
+
+          💻 विज्ञान एवं प्रौद्योगिकी
+
+          1. शीर्षक
+          • मुख्य तथ्य:
+          • परीक्षा उपयोगी तथ्य:
+          • स्रोत:
+          • स्रोत तारीख:
+
+          📝 महत्वपूर्ण MCQs
+
+          Q1. प्रश्न?
+          A. विकल्प
+          B. विकल्प
+          C. विकल्प
+          D. विकल्प
+
+          उत्तर: B
+
+          केवल verified और genuinely important information दो।
           """
 
-          response = client.models.generate_content(
-              model="gemini-3.8-flash",
-              contents=prompt
-          )
+          models = [
+              "gemini-2.5-flash",
+              "gemini-2.5-flash-lite"
+          ]
 
-          print("================================")
-          print(f"📅 आज की तारीख: {today}")
-          print("================================")
-          print(response.text)
+          last_error = None
+
+          for model in models:
+              for attempt in range(3):
+                  try:
+                      print(
+                          f"Trying {model}, attempt {attempt + 1}"
+                      )
+
+                      response = client.models.generate_content(
+                          model=model,
+                          contents=prompt
+                      )
+
+                      print("\n==============================")
+                      print(f"📅 {today}")
+                      print("==============================\n")
+                      print(response.text)
+
+                      raise SystemExit(0)
+
+                  except Exception as e:
+                      last_error = e
+                      print(
+                          f"Temporary error: {type(e).__name__}: {e}"
+                      )
+
+                      if attempt < 2:
+                          time.sleep(10 * (attempt + 1))
+
+              print(f"Switching from {model}...")
+
+          print("All Gemini attempts failed.")
+          raise last_error
           PY
