@@ -1,0 +1,1104 @@
+name: Sujas Current Affairs Bot
+
+on:
+  workflow_run:
+    workflows:
+      - "Sujas Auto"
+    types:
+      - completed
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sujas-current-affairs-bot
+  cancel-in-progress: false
+
+jobs:
+
+  process:
+
+    # workflow_run में केवल successful Sujas run पर काम करना है
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 10
+
+    steps:
+
+      # ==================================================
+      # 1. CHECKOUT
+      # ==================================================
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ==================================================
+      # 2. FIND SUJAS PDF
+      # ==================================================
+
+      - name: Find latest Sujas PDF
+        id: find_pdf
+        run: |
+
+          python - <<'PY'
+
+          import os
+          import requests
+          from pathlib import Path
+
+
+          API_URL = (
+              "https://dipr.rajasthan.gov.in/"
+              "webapi/api/OrderPortal/GetAll"
+          )
+
+
+          payload = {
+
+              "AdmDepartmentCode": 0,
+              "AttachmentList": [],
+              "BeneficiaryCategory": 0,
+
+              "Date": "",
+
+              "DepartmentCode": 85,
+
+              "DeptSectionCode": 0,
+
+              "EntryFromDate": "",
+              "EntryToDate": "",
+
+              "FromDate": "",
+
+              "Id": 0,
+
+              "IndexModel": {
+
+                  "AdvanceSearchModel": {},
+
+                  "PageSize": 15,
+
+                  "IsPostBack": False,
+
+                  "OrderByAsc": 0,
+
+                  "Search": None,
+
+                  "OrderBy": None
+              },
+
+              "IndividualBeneficiaryScheme": "",
+
+              "IsImagesRequired": True,
+
+              "IsLatest": -1,
+
+              "IsNotJankalyan": -1,
+
+              "OrderNo": "",
+
+              "SchemeCode": 0,
+
+              "Search": "",
+
+              "SectorIds": 0,
+
+              "Status": 1,
+
+              "SubTypeCode": "2583",
+
+              "Title": "",
+
+              "ToDate": "",
+
+              "Type": "10"
+          }
+
+
+          response = requests.post(
+              API_URL,
+              json=payload,
+              timeout=30
+          )
+
+
+          response.raise_for_status()
+
+
+          data = response.json()
+
+
+          if isinstance(data, dict):
+
+              records = (
+                  data.get("Data")
+                  or data.get("data")
+                  or data.get("Result")
+                  or data.get("result")
+                  or []
+              )
+
+          else:
+
+              records = data
+
+
+          if not isinstance(records, list):
+
+              raise SystemExit(
+                  "❌ DIPR API response समझ नहीं आया"
+              )
+
+
+          if not records:
+
+              raise SystemExit(
+                  "❌ कोई Sujas record नहीं मिला"
+              )
+
+
+          # ------------------------------------------------
+          # Find first record containing PDF/attachment
+          # ------------------------------------------------
+
+          selected = None
+          pdf_url = None
+          order_id = None
+          title = None
+          date_value = None
+
+
+          def recursive_find_pdf(obj):
+
+              if isinstance(obj, dict):
+
+                  for key, value in obj.items():
+
+                      key_lower = str(key).lower()
+
+                      if isinstance(value, str):
+
+                          value_lower = value.lower()
+
+                          if (
+                              ".pdf" in value_lower
+                              and (
+                                  value_lower.startswith("http://")
+                                  or
+                                  value_lower.startswith("https://")
+                              )
+                          ):
+
+                              return value
+
+
+                      found = recursive_find_pdf(value)
+
+                      if found:
+                          return found
+
+
+              elif isinstance(obj, list):
+
+                  for item in obj:
+
+                      found = recursive_find_pdf(item)
+
+                      if found:
+                          return found
+
+
+              return None
+
+
+          for record in records:
+
+              possible_pdf = recursive_find_pdf(record)
+
+              if possible_pdf:
+
+                  selected = record
+
+                  pdf_url = possible_pdf
+
+                  break
+
+
+          if selected is None:
+
+              raise SystemExit(
+                  "❌ Sujas PDF URL नहीं मिला"
+              )
+
+
+          # ------------------------------------------------
+          # Get metadata
+          # ------------------------------------------------
+
+          for key in [
+              "Id",
+              "ID",
+              "id",
+              "OrderId",
+              "OrderID",
+              "orderId"
+          ]:
+
+              if key in selected:
+
+                  order_id = selected[key]
+
+                  break
+
+
+          for key in [
+              "Title",
+              "title",
+              "OrderTitle",
+              "orderTitle"
+          ]:
+
+              if key in selected:
+
+                  title = selected[key]
+
+                  break
+
+
+          for key in [
+              "Date",
+              "date",
+              "OrderDate",
+              "orderDate"
+          ]:
+
+              if key in selected:
+
+                  date_value = selected[key]
+
+                  break
+
+
+          print(
+              "========================================"
+          )
+
+          print(
+              "SUJAS PDF FOUND"
+          )
+
+          print(
+              "========================================"
+          )
+
+          print(
+              "TITLE:",
+              title
+          )
+
+          print(
+              "DATE:",
+              date_value
+          )
+
+          print(
+              "ORDER ID:",
+              order_id
+          )
+
+          print(
+              "PDF:",
+              pdf_url
+          )
+
+          print(
+              "========================================"
+          )
+
+
+          # ------------------------------------------------
+          # Download PDF
+          # ------------------------------------------------
+
+          pdf_response = requests.get(
+              pdf_url,
+              timeout=60
+          )
+
+          pdf_response.raise_for_status()
+
+
+          pdf_path = Path(
+              "sujas_current.pdf"
+          )
+
+
+          pdf_path.write_bytes(
+              pdf_response.content
+          )
+
+
+          size_mb = (
+              pdf_path.stat().st_size
+              / 1024
+              / 1024
+          )
+
+
+          print(
+              f"✅ PDF downloaded: {size_mb:.2f} MB"
+          )
+
+
+          # ------------------------------------------------
+          # GitHub outputs
+          # ------------------------------------------------
+
+          with open(
+              os.environ["GITHUB_OUTPUT"],
+              "a",
+              encoding="utf-8"
+          ) as output:
+
+              output.write(
+                  f"pdf_path={pdf_path}\n"
+              )
+
+              output.write(
+                  f"pdf_url={pdf_url}\n"
+              )
+
+              output.write(
+                  f"order_id={order_id or ''}\n"
+              )
+
+          PY
+
+
+      # ==================================================
+      # 3. CHECK DUPLICATE
+      # ==================================================
+
+      - name: Check processed Sujas
+        id: duplicate
+        run: |
+
+          CURRENT_ID="${{ steps.find_pdf.outputs.order_id }}"
+
+          STATE_FILE="current_affairs_sujas_state.txt"
+
+
+          if [ -f "$STATE_FILE" ]; then
+
+            OLD_ID=$(cat "$STATE_FILE")
+
+          else
+
+            OLD_ID=""
+
+          fi
+
+
+          echo "OLD SUJAS ID: ${OLD_ID:-NONE}"
+          echo "CURRENT SUJAS ID: ${CURRENT_ID:-NONE}"
+
+
+          if [ -n "$CURRENT_ID" ] && [ "$OLD_ID" = "$CURRENT_ID" ]; then
+
+            echo "⏭️ SAME SUJAS — ALREADY PROCESSED"
+
+            echo "new_sujas=false" >> "$GITHUB_OUTPUT"
+
+          else
+
+            echo "🆕 NEW SUJAS"
+
+            echo "new_sujas=true" >> "$GITHUB_OUTPUT"
+
+          fi
+
+
+      # ==================================================
+      # 4. GEMINI + TELEGRAM
+      # ==================================================
+
+      - name: Generate and send current affairs
+        if: steps.duplicate.outputs.new_sujas == 'true'
+
+        env:
+
+          GEMINI_API_KEY:
+            ${{ secrets.GEMINI_API_KEY }}
+
+          CURRENT_AFFAIRS_BOT_TOKEN:
+            ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+
+          TELEGRAM_CHANNEL:
+            "@yourbuddyravindrachoudhary"
+
+          PDF_PATH:
+            ${{ steps.find_pdf.outputs.pdf_path }}
+
+          PDF_URL:
+            ${{ steps.find_pdf.outputs.pdf_url }}
+
+          ORDER_ID:
+            ${{ steps.find_pdf.outputs.order_id }}
+
+        run: |
+
+          python - <<'PY'
+
+          import base64
+          import json
+          import os
+          import requests
+          from pathlib import Path
+
+
+          # ==================================================
+          # CONFIG
+          # ==================================================
+
+          API_KEY = os.environ[
+              "GEMINI_API_KEY"
+          ]
+
+          BOT_TOKEN = os.environ[
+              "CURRENT_AFFAIRS_BOT_TOKEN"
+          ]
+
+          CHANNEL = os.environ[
+              "TELEGRAM_CHANNEL"
+          ]
+
+          PDF_PATH = Path(
+              os.environ["PDF_PATH"]
+          )
+
+          PDF_URL = os.environ[
+              "PDF_URL"
+          ]
+
+          ORDER_ID = os.environ.get(
+              "ORDER_ID",
+              ""
+          )
+
+
+          # ==================================================
+          # VALIDATE PDF
+          # ==================================================
+
+          if not PDF_PATH.exists():
+
+              raise SystemExit(
+                  "❌ PDF नहीं मिला"
+              )
+
+
+          pdf_bytes = PDF_PATH.read_bytes()
+
+
+          if not pdf_bytes:
+
+              raise SystemExit(
+                  "❌ PDF खाली है"
+              )
+
+
+          print(
+              "PDF size:",
+              len(pdf_bytes)
+          )
+
+
+          # ==================================================
+          # GEMINI PROMPT
+          # ==================================================
+
+          prompt = r"""
+          तुम Rajasthan competitive examinations के लिए
+          Current Affairs expert हो।
+
+          नीचे दिया गया PDF राजस्थान सरकार के Sujas
+          e-Bulletin का source document है।
+
+          केवल PDF में मौजूद जानकारी के आधार पर
+          current affairs तैयार करो।
+
+          अत्यंत महत्वपूर्ण नियम:
+
+          1. PDF के बाहर से कोई fact मत जोड़ो।
+          2. कोई current affair invent मत करो।
+          3. अगर information स्पष्ट नहीं है तो उसे छोड़ दो।
+          4. केवल exam-relevant जानकारी चुनो।
+          5. Rajasthan-related information को प्राथमिकता दो।
+          6. नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
+             पुरस्कार, खेल, व्यक्ति, स्थान, बजट,
+             अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य,
+             पर्यावरण, उद्योग, निवेश, infrastructure,
+             reports, indices, science & technology,
+             AI और digital developments जैसी categories
+             शामिल की जा सकती हैं।
+          7. Generic national news तभी लो जब वह
+             Rajasthan से directly relevant हो।
+          8. प्रत्येक प्रश्न के लिए 4 options बनाओ।
+          9. केवल एक सही उत्तर हो।
+          10. उत्तर PDF में उपलब्ध information से ही हो।
+          11. प्रश्न RPSC/RSSB स्तर के exam-oriented हों।
+          12. भाषा साफ और शुद्ध हिंदी हो।
+          13. बहुत लंबा explanation मत दो।
+          14. Duplicate facts मत दो।
+          15. PDF में मौजूद page number पता हो तो
+              उसे page field में दो।
+          16. हर item के साथ source "Sujas" रखो।
+
+          Output केवल valid JSON में देना है।
+          """
+
+
+          # ==================================================
+          # JSON SCHEMA
+          # ==================================================
+
+          schema = {
+
+              "type": "object",
+
+              "properties": {
+
+                  "items": {
+
+                      "type": "array",
+
+                      "items": {
+
+                          "type": "object",
+
+                          "properties": {
+
+                              "category": {
+                                  "type": "string"
+                              },
+
+                              "question": {
+                                  "type": "string"
+                              },
+
+                              "option_a": {
+                                  "type": "string"
+                              },
+
+                              "option_b": {
+                                  "type": "string"
+                              },
+
+                              "option_c": {
+                                  "type": "string"
+                              },
+
+                              "option_d": {
+                                  "type": "string"
+                              },
+
+                              "answer": {
+                                  "type": "string"
+                              },
+
+                              "explanation": {
+                                  "type": "string"
+                              },
+
+                              "page": {
+                                  "type": "string"
+                              },
+
+                              "source": {
+                                  "type": "string"
+                              }
+
+                          },
+
+                          "required": [
+
+                              "category",
+
+                              "question",
+
+                              "option_a",
+
+                              "option_b",
+
+                              "option_c",
+
+                              "option_d",
+
+                              "answer",
+
+                              "explanation",
+
+                              "page",
+
+                              "source"
+
+                          ]
+
+                      }
+
+                  }
+
+              },
+
+              "required": [
+                  "items"
+              ]
+
+          }
+
+
+          # ==================================================
+          # GEMINI REQUEST
+          # ==================================================
+
+          model = "gemini-3.8-flash"
+
+
+          url = (
+              "https://generativelanguage.googleapis.com/"
+              f"v1beta/models/{model}:generateContent"
+          )
+
+
+          pdf_base64 = base64.b64encode(
+              pdf_bytes
+          ).decode("utf-8")
+
+
+          payload = {
+
+              "contents": [
+
+                  {
+
+                      "parts": [
+
+                          {
+                              "text": prompt
+                          },
+
+                          {
+
+                              "inline_data": {
+
+                                  "mime_type":
+                                      "application/pdf",
+
+                                  "data":
+                                      pdf_base64
+
+                              }
+
+                          }
+
+                      ]
+
+                  }
+
+              ],
+
+              "generationConfig": {
+
+                  "responseMimeType":
+                      "application/json",
+
+                  "responseSchema":
+                      schema,
+
+                  "temperature":
+                      0.1
+
+              }
+
+          }
+
+
+          print(
+              "Sending PDF to Gemini..."
+          )
+
+
+          response = requests.post(
+
+              url,
+
+              headers={
+
+                  "x-goog-api-key":
+                      API_KEY,
+
+                  "Content-Type":
+                      "application/json"
+
+              },
+
+              json=payload,
+
+              timeout=300
+
+          )
+
+
+          if response.status_code != 200:
+
+              print(
+                  response.text[:5000]
+              )
+
+              response.raise_for_status()
+
+
+          gemini_data = response.json()
+
+
+          candidates = gemini_data.get(
+              "candidates",
+              []
+          )
+
+
+          if not candidates:
+
+              raise SystemExit(
+                  "❌ Gemini ने कोई candidate नहीं दिया"
+              )
+
+
+          parts = (
+
+              candidates[0]
+              .get("content", {})
+              .get("parts", [])
+          )
+
+
+          text = ""
+
+
+          for part in parts:
+
+              if "text" in part:
+
+                  text += part["text"]
+
+
+          if not text:
+
+              raise SystemExit(
+                  "❌ Gemini response खाली है"
+              )
+
+
+          result = json.loads(
+              text
+          )
+
+
+          items = result.get(
+              "items",
+              []
+          )
+
+
+          print(
+              "========================================"
+          )
+
+          print(
+              "GEMINI ITEMS:",
+              len(items)
+          )
+
+          print(
+              "========================================"
+          )
+
+
+          # ==================================================
+          # NO CONTENT
+          # ==================================================
+
+          if not items:
+
+              raise SystemExit(
+                  "❌ Gemini ने कोई current-affairs item नहीं बनाया"
+              )
+
+
+          # ==================================================
+          # SAVE JSON
+          # ==================================================
+
+          output_file = Path(
+              "current_affairs.json"
+          )
+
+
+          output_file.write_text(
+
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+
+              encoding="utf-8"
+          )
+
+
+          # ==================================================
+          # TELEGRAM
+          # ==================================================
+
+          telegram_url = (
+              "https://api.telegram.org/"
+              f"bot{BOT_TOKEN}/sendMessage"
+          )
+
+
+          header = (
+              "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
+              "━━━━━━━━━━━━━━━━━━\n\n"
+          )
+
+
+          footer = (
+              "\n\n━━━━━━━━━━━━━━━━━━\n"
+              "📚 Source: <b>Sujas</b>\n"
+              "🤖 YourBuddy Current Affairs"
+          )
+
+
+          # --------------------------------------------------
+          # Send one message per MCQ
+          # --------------------------------------------------
+
+          sent = 0
+
+
+          for index, item in enumerate(
+              items,
+              start=1
+          ):
+
+              category = item.get(
+                  "category",
+                  "राजस्थान करेंट अफेयर्स"
+              )
+
+              question = item.get(
+                  "question",
+                  ""
+              )
+
+              a = item.get(
+                  "option_a",
+                  ""
+              )
+
+              b = item.get(
+                  "option_b",
+                  ""
+              )
+
+              c = item.get(
+                  "option_c",
+                  ""
+              )
+
+              d = item.get(
+                  "option_d",
+                  ""
+              )
+
+              answer = item.get(
+                  "answer",
+                  ""
+              )
+
+              explanation = item.get(
+                  "explanation",
+                  ""
+              )
+
+              page = item.get(
+                  "page",
+                  ""
+              )
+
+
+              message = (
+
+                  header
+
+                  f"<b>प्रश्न {index}.</b> "
+                  f"{question}\n\n"
+
+                  f"(A) {a}\n"
+                  f"(B) {b}\n"
+                  f"(C) {c}\n"
+                  f"(D) {d}\n\n"
+
+                  f"✅ <b>उत्तर:</b> {answer}\n"
+
+                  f"💡 <b>व्याख्या:</b> "
+                  f"{explanation}"
+              )
+
+
+              if page:
+
+                  message += (
+                      f"\n\n📄 <b>Page:</b> {page}"
+                  )
+
+
+              message += footer
+
+
+              # Telegram message limit safety
+              if len(message) > 4000:
+
+                  message = message[:3950] + (
+                      "\n\n…"
+                  )
+
+
+              telegram_response = requests.post(
+
+                  telegram_url,
+
+                  json={
+
+                      "chat_id":
+                          CHANNEL,
+
+                      "text":
+                          message,
+
+                      "parse_mode":
+                          "HTML",
+
+                      "disable_web_page_preview":
+                          True
+
+                  },
+
+                  timeout=30
+
+              )
+
+
+              telegram_response.raise_for_status()
+
+
+              telegram_result = (
+                  telegram_response.json()
+              )
+
+
+              if not telegram_result.get(
+                  "ok"
+              ):
+
+                  raise SystemExit(
+                      "❌ Telegram error: "
+                      + str(
+                          telegram_result
+                      )
+                  )
+
+
+              sent += 1
+
+
+              print(
+                  f"✅ Telegram: {index}"
+              )
+
+
+          # ==================================================
+          # SAVE STATE
+          # ==================================================
+
+          Path(
+              "current_affairs_sujas_state.txt"
+          ).write_text(
+
+              ORDER_ID,
+
+              encoding="utf-8"
+          )
+
+
+          print(
+              "========================================"
+          )
+
+          print(
+              f"✅ TOTAL TELEGRAM MESSAGES: {sent}"
+          )
+
+          print(
+              "✅ SUJAS PROCESSING COMPLETE"
+          )
+
+          print(
+              "========================================"
+          )
+
+
+          PY
+
+
+      # ==================================================
+      # 5. SAVE RESULTS
+      # ==================================================
+
+      - name: Save current affairs data
+        if: steps.duplicate.outputs.new_sujas == 'true'
+
+        run: |
+
+          git add \
+            current_affairs.json \
+            current_affairs_sujas_state.txt
+
+
+          if git diff --cached --quiet; then
+
+            echo "⏭️ Nothing to commit."
+
+          else
+
+            git config user.name \
+              "github-actions[bot]"
+
+            git config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git commit \
+              -m "Generate Sujas current affairs"
+
+            git push
+
+            echo "✅ Current affairs saved."
+
+          fi
