@@ -1,74 +1,158 @@
-name: Gemini Current Affairs Test
+name: Meridian Rajasthan Video Detector
 
 on:
+  schedule:
+    - cron: '7,37 * * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: meridian-rajasthan-video
+  cancel-in-progress: true
+
 jobs:
-  gemini-test:
+  detect-rajasthan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Test Gemini
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Detect latest Rajasthan Current Affairs video
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
+          from pathlib import Path
 
-          key = os.environ["GEMINI_API_KEY"]
+          KEY = os.environ["YOUTUBE_API_KEY"]
+          STATE_FILE = Path("meridian_latest_video.txt")
 
-          url = (
-              "https://generativelanguage.googleapis.com/"
-              "v1beta/models/gemini-3.7-flash:generateContent"
-          )
-
-          prompt = """
-          राजस्थान प्रतियोगी परीक्षाओं के लिए एक MCQ बनाओ।
-
-          विषय: राजस्थान का वर्तमान घटनाक्रम
-
-          प्रश्न हिंदी में हो।
-          4 विकल्प A, B, C, D हों।
-          सही उत्तर बताओ।
-          छोटी व्याख्या दो।
-
-          यह केवल API connection test है।
-          """
-
-          response = requests.post(
-              url,
-              headers={
-                  "x-goog-api-key": key,
-                  "Content-Type": "application/json"
+          # 1. Meridian Academy channel
+          response = requests.get(
+              "https://www.googleapis.com/youtube/v3/channels",
+              params={
+                  "part": "contentDetails",
+                  "forHandle": "meridian.academy",
+                  "key": KEY
               },
-              json={
-                  "contents": [
-                      {
-                          "parts": [
-                              {"text": prompt}
-                          ]
-                      }
-                  ]
-              },
-              timeout=60
+              timeout=20
           )
-
-          print("HTTP STATUS:", response.status_code)
-
-          if response.status_code != 200:
-              print(response.text)
-              raise SystemExit(1)
+          response.raise_for_status()
 
           data = response.json()
 
-          text = data["candidates"][0]["content"]["parts"][0]["text"]
+          if not data.get("items"):
+              raise SystemExit("❌ Meridian Academy channel नहीं मिला")
+
+          uploads_playlist = data["items"][0]["contentDetails"][
+              "relatedPlaylists"
+          ]["uploads"]
+
+          # 2. Latest uploads
+          response = requests.get(
+              "https://www.googleapis.com/youtube/v3/playlistItems",
+              params={
+                  "part": "snippet,contentDetails",
+                  "playlistId": uploads_playlist,
+                  "maxResults": 10,
+                  "key": KEY
+              },
+              timeout=20
+          )
+          response.raise_for_status()
+
+          items = response.json().get("items", [])
+
+          # 3. Find latest Rajasthan Current Affairs / SUJAS video
+          selected = None
+
+          for item in items:
+              title = item["snippet"]["title"]
+              title_lower = title.lower()
+
+              if (
+                  "rajasthan current affairs" in title_lower
+                  or (
+                      "rajasthan" in title_lower
+                      and "sujas" in title_lower
+                  )
+              ):
+                  selected = item
+                  break
+
+          if selected is None:
+              raise SystemExit(
+                  "❌ Rajasthan Current Affairs video नहीं मिला"
+              )
+
+          video_id = selected["contentDetails"]["videoId"]
+          title = selected["snippet"]["title"]
+          published = selected["contentDetails"].get(
+              "videoPublishedAt",
+              selected["snippet"]["publishedAt"]
+          )
+
+          # 4. Read saved video ID
+          old_id = ""
+
+          if STATE_FILE.exists():
+              old_id = STATE_FILE.read_text(
+                  encoding="utf-8"
+              ).strip()
+
+          print("========================================")
+          print("MERIDIAN RAJASTHAN VIDEO CHECK")
+          print("========================================")
+          print("OLD VIDEO ID:", old_id or "NONE")
+          print("NEW VIDEO ID:", video_id)
+          print("TITLE:", title)
+          print("PUBLISHED:", published)
+          print("========================================")
+
+          # 5. Duplicate protection
+          if old_id == video_id:
+              print()
+              print("⏭️ SAME VIDEO")
+              print("Already processed.")
+              print("No state change.")
+
+          else:
+              print()
+              print("🆕 NEW RAJASTHAN VIDEO FOUND")
+              print("Saving video ID...")
+
+              STATE_FILE.write_text(
+                  video_id,
+                  encoding="utf-8"
+              )
+
+              print("✅ State file updated")
 
           print()
-          print("========================================")
-          print("✅ GEMINI RESPONSE")
-          print("========================================")
-          print(text)
+          print("VIDEO URL:")
+          print(f"https://www.youtube.com/watch?v={video_id}")
           print("========================================")
           PY
+
+      # 6. Commit state only when changed
+      - name: Save video state
+        run: |
+          git add meridian_latest_video.txt
+
+          if git diff --cached --quiet; then
+            echo "⏭️ No state change."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git commit -m "Update Meridian latest video"
+            git push
+
+            echo "✅ State file committed to GitHub."
+          fi
