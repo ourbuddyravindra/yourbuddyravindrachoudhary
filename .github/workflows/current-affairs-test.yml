@@ -1,33 +1,79 @@
-name: Current Affairs Bot Test
+name: Meridian Video Content Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  test-video:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Send test message
+      - name: Get latest video content
         env:
-          BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
 
-          token = os.environ["BOT_TOKEN"]
+          key = os.environ["YOUTUBE_API_KEY"]
 
-          url = f"https://api.telegram.org/bot{token}/sendMessage"
+          # Meridian Academy channel
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/channels",
+              params={
+                  "part": "contentDetails",
+                  "forHandle": "meridian.academy",
+                  "key": key
+              },
+              timeout=20
+          )
+          r.raise_for_status()
 
-          data = {
-              "chat_id": "@yourbuddyravindrachoudhary",
-              "text": "🤖 Current Affairs Bot\n\n✅ Bot successfully connected!\n\nअब Daily Current Affairs system बनाने के लिए तैयार है।"
-          }
+          channel = r.json()["items"][0]
+          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
 
-          response = requests.post(url, data=data, timeout=30)
-          print(response.text)
+          # Latest uploaded video
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/playlistItems",
+              params={
+                  "part": "contentDetails",
+                  "playlistId": uploads,
+                  "maxResults": 1,
+                  "key": key
+              },
+              timeout=20
+          )
+          r.raise_for_status()
 
-          if not response.ok:
-              raise SystemExit("Telegram message failed")
+          video_id = r.json()["items"][0]["contentDetails"]["videoId"]
+
+          # Full video metadata
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/videos",
+              params={
+                  "part": "snippet,contentDetails",
+                  "id": video_id,
+                  "key": key
+              },
+              timeout=20
+          )
+          r.raise_for_status()
+
+          video = r.json()["items"][0]
+          snippet = video["snippet"]
+
+          print("================================")
+          print("VIDEO TITLE:")
+          print(snippet["title"])
+          print()
+          print("PUBLISHED:")
+          print(snippet["publishedAt"])
+          print()
+          print("DESCRIPTION:")
+          print(snippet["description"])
+          print()
+          print("VIDEO URL:")
+          print(f"https://www.youtube.com/watch?v={video_id}")
+          print("================================")
           PY
