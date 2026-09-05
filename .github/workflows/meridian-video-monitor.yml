@@ -1,0 +1,150 @@
+name: Meridian Rajasthan Video Monitor
+
+on:
+  schedule:
+    - cron: '7,37 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: meridian-rajasthan-monitor
+  cancel-in-progress: true
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Check latest Rajasthan Current Affairs video
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+          from pathlib import Path
+
+          KEY = os.environ["YOUTUBE_API_KEY"]
+          STATE_FILE = Path("meridian_latest_video.txt")
+
+          # Get Meridian Academy channel
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/channels",
+              params={
+                  "part": "contentDetails",
+                  "forHandle": "meridian.academy",
+                  "key": KEY
+              },
+              timeout=20
+          )
+          r.raise_for_status()
+
+          data = r.json()
+
+          if not data.get("items"):
+              raise SystemExit("❌ Meridian Academy channel नहीं मिला")
+
+          uploads_playlist = data["items"][0]["contentDetails"][
+              "relatedPlaylists"
+          ]["uploads"]
+
+          # Get latest uploads
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/playlistItems",
+              params={
+                  "part": "snippet,contentDetails",
+                  "playlistId": uploads_playlist,
+                  "maxResults": 10,
+                  "key": KEY
+              },
+              timeout=20
+          )
+          r.raise_for_status()
+
+          items = r.json().get("items", [])
+
+          # Find latest Rajasthan Current Affairs / SUJAS video
+          selected = None
+
+          for item in items:
+              title = item["snippet"]["title"]
+              title_lower = title.lower()
+
+              if (
+                  "rajasthan current affairs" in title_lower
+                  or (
+                      "rajasthan" in title_lower
+                      and "sujas" in title_lower
+                  )
+              ):
+                  selected = item
+                  break
+
+          if selected is None:
+              raise SystemExit(
+                  "❌ Rajasthan Current Affairs video नहीं मिला"
+              )
+
+          video_id = selected["contentDetails"]["videoId"]
+          title = selected["snippet"]["title"]
+          published = selected["contentDetails"].get(
+              "videoPublishedAt",
+              selected["snippet"]["publishedAt"]
+          )
+
+          old_id = ""
+
+          if STATE_FILE.exists():
+              old_id = STATE_FILE.read_text(
+                  encoding="utf-8"
+              ).strip()
+
+          print("========================================")
+          print("MERIDIAN RAJASTHAN VIDEO MONITOR")
+          print("========================================")
+          print("OLD VIDEO ID:", old_id or "NONE")
+          print("NEW VIDEO ID:", video_id)
+          print("TITLE:", title)
+          print("PUBLISHED:", published)
+          print("========================================")
+
+          if old_id == video_id:
+              print("⏭️ SAME VIDEO — NOTHING TO DO")
+
+          else:
+              print("🆕 NEW RAJASTHAN VIDEO FOUND")
+              print("Saving new video ID...")
+
+              STATE_FILE.write_text(
+                  video_id,
+                  encoding="utf-8"
+              )
+
+              print("✅ New video ID saved")
+
+          print()
+          print("VIDEO URL:")
+          print(f"https://www.youtube.com/watch?v={video_id}")
+          PY
+
+      - name: Commit new video state
+        run: |
+          git add meridian_latest_video.txt
+
+          if git diff --cached --quiet; then
+            echo "⏭️ No state change."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git commit -m "Update Meridian Rajasthan video"
+            git push
+
+            echo "✅ New video state committed."
+          fi
