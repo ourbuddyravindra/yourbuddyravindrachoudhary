@@ -139,7 +139,7 @@ jobs:
           if os.path.exists(state_file):
               old_key = open(state_file, encoding="utf-8").read().strip()
 
-          if old_key == current_key:
+          if old_key == current_key or old_key == order_id:
               print("⏭️ यह Sujas पहले ही upload हो चुकी है. Skip.")
               raise SystemExit(0)
 
