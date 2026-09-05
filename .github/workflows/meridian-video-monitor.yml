@@ -4,6 +4,7 @@ on:
   schedule:
     - cron: '7,37 * * * *'
       timezone: "Asia/Kolkata"
+
   workflow_dispatch:
 
 permissions:
@@ -15,97 +16,193 @@ concurrency:
 
 jobs:
   monitor:
+
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
+
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v6
 
+
+      # ==========================================
+      # 2. FIND LATEST RAJASTHAN VIDEO
+      # ==========================================
       - name: Detect latest Rajasthan video
         id: detect
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+
         run: |
+
           python - <<'PY'
+
           import os
           import requests
           from pathlib import Path
 
-          KEY = os.environ["YOUTUBE_API_KEY"]
-          STATE_FILE = Path("meridian_latest_video.txt")
 
-          r = requests.get(
+          # --------------------------------------
+          # CONFIG
+          # --------------------------------------
+
+          API_KEY = os.environ["YOUTUBE_API_KEY"]
+
+          STATE_FILE = Path(
+              "meridian_latest_video.txt"
+          )
+
+
+          # --------------------------------------
+          # FIND MERIDIAN CHANNEL
+          # --------------------------------------
+
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/channels",
               params={
                   "part": "contentDetails",
                   "forHandle": "meridian.academy",
-                  "key": KEY
+                  "key": API_KEY
               },
               timeout=20
           )
-          r.raise_for_status()
 
-          data = r.json()
+          response.raise_for_status()
+
+          data = response.json()
+
 
           if not data.get("items"):
-              raise SystemExit("❌ Meridian Academy channel नहीं मिला")
 
-          uploads = data["items"][0]["contentDetails"][
-              "relatedPlaylists"
-          ]["uploads"]
+              raise SystemExit(
+                  "❌ Meridian Academy channel नहीं मिला"
+              )
 
-          r = requests.get(
+
+          uploads_playlist = (
+              data["items"][0]
+              ["contentDetails"]
+              ["relatedPlaylists"]
+              ["uploads"]
+          )
+
+
+          # --------------------------------------
+          # GET LATEST VIDEOS
+          # --------------------------------------
+
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/playlistItems",
               params={
                   "part": "snippet,contentDetails",
-                  "playlistId": uploads,
+                  "playlistId": uploads_playlist,
                   "maxResults": 10,
-                  "key": KEY
+                  "key": API_KEY
               },
               timeout=20
           )
-          r.raise_for_status()
 
-          items = r.json().get("items", [])
+          response.raise_for_status()
+
+          items = response.json().get(
+              "items",
+              []
+          )
+
+
+          # --------------------------------------
+          # FIND RAJASTHAN CURRENT AFFAIRS VIDEO
+          # --------------------------------------
 
           selected = None
 
+
           for item in items:
+
               title = item["snippet"]["title"]
+
               title_lower = title.lower()
 
+
               if (
-                  "rajasthan current affairs" in title_lower
-                  or (
+                  "rajasthan current affairs"
+                  in title_lower
+
+                  or
+
+                  (
                       "rajasthan" in title_lower
-                      and "sujas" in title_lower
+                      and
+                      "sujas" in title_lower
                   )
               ):
+
                   selected = item
+
                   break
 
+
           if selected is None:
+
               raise SystemExit(
                   "❌ Rajasthan Current Affairs video नहीं मिला"
               )
 
-          video_id = selected["contentDetails"]["videoId"]
-          title = selected["snippet"]["title"]
-          published = selected["contentDetails"].get(
-              "videoPublishedAt",
-              selected["snippet"]["publishedAt"]
+
+          # --------------------------------------
+          # VIDEO DETAILS
+          # --------------------------------------
+
+          video_id = (
+              selected["contentDetails"]
+              ["videoId"]
           )
 
-          video_url = f"https://www.youtube.com/watch?v={video_id}"
+          title = (
+              selected["snippet"]
+              ["title"]
+          )
+
+          published = (
+              selected["contentDetails"]
+              .get(
+                  "videoPublishedAt",
+                  selected["snippet"]["publishedAt"]
+              )
+          )
+
+          video_url = (
+              f"https://www.youtube.com/watch?v={video_id}"
+          )
+
+
+          # --------------------------------------
+          # READ OLD STATE
+          # --------------------------------------
 
           old_id = ""
 
-          if STATE_FILE.exists():
-              old_id = STATE_FILE.read_text(
-                  encoding="utf-8"
-              ).strip()
 
+          if STATE_FILE.exists():
+
+              old_id = (
+                  STATE_FILE
+                  .read_text(
+                      encoding="utf-8"
+                  )
+                  .strip()
+              )
+
+
+          # --------------------------------------
+          # LOG
+          # --------------------------------------
+
+          print("")
           print("========================================")
           print("MERIDIAN RAJASTHAN VIDEO MONITOR")
           print("========================================")
@@ -113,96 +210,249 @@ jobs:
           print("NEW VIDEO ID:", video_id)
           print("TITLE:", title)
           print("PUBLISHED:", published)
+          print("VIDEO URL:", video_url)
           print("========================================")
+          print("")
+
+
+          # --------------------------------------
+          # DUPLICATE CHECK
+          # --------------------------------------
 
           if old_id == video_id:
-              print("⏭️ SAME VIDEO — NOTHING TO DO")
-              print("NEW_VIDEO=false")
 
-          else:
-              print("🆕 NEW RAJASTHAN VIDEO FOUND")
-
-              STATE_FILE.write_text(
-                  video_id,
-                  encoding="utf-8"
+              print(
+                  "⏭️ SAME VIDEO — NOTHING TO DO"
               )
 
               with open(
                   os.environ["GITHUB_OUTPUT"],
                   "a",
                   encoding="utf-8"
-              ) as f:
-                  f.write("new_video=true\n")
-                  f.write(f"video_id={video_id}\n")
-                  f.write(f"video_url={video_url}\n")
-                  f.write(f"published={published}\n")
-                  f.write("title<<EOF\n")
-                  f.write(title + "\n")
-                  f.write("EOF\n")
+              ) as output:
+
+                  output.write(
+                      "new_video=false\n"
+                  )
+
+
+          else:
+
+              print(
+                  "🆕 NEW RAJASTHAN VIDEO FOUND"
+              )
+
+
+              # Save new state
+
+              STATE_FILE.write_text(
+                  video_id,
+                  encoding="utf-8"
+              )
+
+
+              # Send outputs
+
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a",
+                  encoding="utf-8"
+              ) as output:
+
+                  output.write(
+                      "new_video=true\n"
+                  )
+
+                  output.write(
+                      f"video_id={video_id}\n"
+                  )
+
+                  output.write(
+                      f"video_url={video_url}\n"
+                  )
+
+                  output.write(
+                      f"published={published}\n"
+                  )
+
+                  output.write(
+                      "title<<EOF\n"
+                  )
+
+                  output.write(
+                      title + "\n"
+                  )
+
+                  output.write(
+                      "EOF\n"
+                  )
+
 
           PY
 
+
+      # ==========================================
+      # 3. SAVE NEW VIDEO ID
+      # ==========================================
       - name: Save video state
         run: |
+
           git add meridian_latest_video.txt
 
-          if git diff --cached --quiet; then
-            echo "⏭️ No state change."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-            git commit -m "Update Meridian Rajasthan video"
+          if git diff --cached --quiet; then
+
+            echo "⏭️ No state change."
+
+          else
+
+            git config user.name \
+              "github-actions[bot]"
+
+            git config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
+
+            git commit \
+              -m "Update Meridian Rajasthan video"
+
+
             git push
 
-            echo "✅ State committed."
+
+            echo "✅ New video state committed."
+
           fi
 
+
+      # ==========================================
+      # 4. TELEGRAM NOTIFICATION
+      # ==========================================
       - name: Send Telegram notification
         if: steps.detect.outputs.new_video == 'true'
+
         env:
-          CURRENT_AFFAIRS_BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
-          TELEGRAM_CHANNEL: "@yourbuddyravindrachoudhary"
-          VIDEO_TITLE: ${{ steps.detect.outputs.title }}
-          VIDEO_URL: ${{ steps.detect.outputs.video_url }}
-          PUBLISHED: ${{ steps.detect.outputs.published }}
+
+          CURRENT_AFFAIRS_BOT_TOKEN:
+            ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+
+          TELEGRAM_CHANNEL:
+            "@yourbuddyravindrachoudhary"
+
+          VIDEO_TITLE:
+            ${{ steps.detect.outputs.title }}
+
+          VIDEO_URL:
+            ${{ steps.detect.outputs.video_url }}
+
+          PUBLISHED:
+            ${{ steps.detect.outputs.published }}
+
+
         run: |
+
           python - <<'PY'
+
           import os
           import requests
 
-          token = os.environ["CURRENT_AFFAIRS_BOT_TOKEN"]
-          channel = os.environ["TELEGRAM_CHANNEL"]
-          title = os.environ["VIDEO_TITLE"]
-          video_url = os.environ["VIDEO_URL"]
+
+          # --------------------------------------
+          # TELEGRAM CONFIG
+          # --------------------------------------
+
+          token = os.environ[
+              "CURRENT_AFFAIRS_BOT_TOKEN"
+          ]
+
+          channel = os.environ[
+              "TELEGRAM_CHANNEL"
+          ]
+
+          title = os.environ[
+              "VIDEO_TITLE"
+          ]
+
+          video_url = os.environ[
+              "VIDEO_URL"
+          ]
+
+          published = os.environ[
+              "PUBLISHED"
+          ]
+
+
+          # --------------------------------------
+          # MESSAGE
+          # --------------------------------------
 
           message = (
               "🆕 <b>नई Rajasthan Current Affairs Video</b>\n\n"
+
               f"📚 <b>{title}</b>\n\n"
-              f"▶️ <a href=\"{video_url}\">YouTube Video देखें</a>\n\n"
-              "🤖 Meridian Academy Monitor"
+
+              f"📅 {published}\n\n"
+
+              f"▶️ <a href=\"{video_url}\">"
+              "YouTube Video देखें"
+              "</a>\n\n"
+
+              "🤖 <b>Meridian Academy Monitor</b>"
           )
 
-          url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+          # --------------------------------------
+          # TELEGRAM API
+          # --------------------------------------
+
+          telegram_url = (
+              f"https://api.telegram.org/"
+              f"bot{token}/sendMessage"
+          )
+
 
           response = requests.post(
-              url,
+
+              telegram_url,
+
               json={
+
                   "chat_id": channel,
+
                   "text": message,
+
                   "parse_mode": "HTML"
+
               },
+
               timeout=20
           )
 
+
           response.raise_for_status()
+
 
           result = response.json()
 
+
           if not result.get("ok"):
+
               raise SystemExit(
                   f"❌ Telegram error: {result}"
               )
 
-          print("✅ Telegram notification sent successfully")
+
+          print("")
+          print(
+              "========================================"
+          )
+          print(
+              "✅ TELEGRAM NOTIFICATION SENT"
+          )
+          print(
+              "========================================"
+          )
+          print("")
+
+
           PY
