@@ -63,109 +63,169 @@ jobs:
           payload = {
 
               "AdmDepartmentCode": 0,
-
               "AttachmentList": [],
-
               "BeneficiaryCategory": 0,
-
               "Date": "",
-
               "DepartmentCode": 85,
-
               "DeptSectionCode": 0,
-
               "EntryFromDate": "",
-
               "EntryToDate": "",
-
               "FromDate": "",
-
               "Id": 0,
 
               "IndexModel": {
-
                   "AdvanceSearchModel": {},
-
                   "PageSize": 15,
-
                   "IsPostBack": False,
-
                   "OrderByAsc": 0,
-
                   "Search": None,
-
                   "OrderBy": None
-
               },
 
               "IndividualBeneficiaryScheme": "",
-
               "IsImagesRequired": True,
-
               "IsLatest": -1,
-
               "IsNotJankalyan": -1,
-
               "OrderNo": "",
-
               "SchemeCode": 0,
-
               "Search": "",
-
               "SectorIds": 0,
-
               "Status": 1,
-
               "SubTypeCode": "2583",
-
               "Title": "",
-
               "ToDate": "",
-
               "Type": "10"
-
           }
+
+
+          print("========================================")
+          print("DIPR API REQUEST")
+          print("========================================")
 
 
           response = requests.post(
               API_URL,
               json=payload,
-              timeout=30
+              timeout=60
           )
 
+
+          print("HTTP STATUS:", response.status_code)
+
+
           response.raise_for_status()
+
 
           data = response.json()
 
 
-          if isinstance(data, dict):
+          # ==========================================
+          # ROBUST API RESPONSE PARSING
+          # ==========================================
 
-              records = (
-                  data.get("Data")
-                  or data.get("data")
-                  or data.get("Result")
-                  or data.get("result")
-                  or []
-              )
-
-          else:
-
-              records = data
+          items = None
 
 
-          if not isinstance(records, list):
+          if isinstance(data, list):
+
+              items = data
+
+
+          elif isinstance(data, dict):
+
+              # Direct list keys
+
+              for key in [
+                  "Data",
+                  "data",
+                  "Result",
+                  "result",
+                  "Items",
+                  "items",
+                  "Records",
+                  "records"
+              ]:
+
+                  value = data.get(key)
+
+                  if isinstance(value, list):
+
+                      items = value
+                      break
+
+
+              # Nested dictionary
+
+              if items is None:
+
+                  for key in [
+                      "Data",
+                      "data",
+                      "Result",
+                      "result"
+                  ]:
+
+                      value = data.get(key)
+
+                      if isinstance(value, dict):
+
+                          for nested_key in [
+                              "Data",
+                              "data",
+                              "Result",
+                              "result",
+                              "Items",
+                              "items",
+                              "Records",
+                              "records"
+                          ]:
+
+                              nested_value = value.get(
+                                  nested_key
+                              )
+
+                              if isinstance(
+                                  nested_value,
+                                  list
+                              ):
+
+                                  items = nested_value
+                                  break
+
+
+                          if items is not None:
+                              break
+
+
+          if not isinstance(items, list):
+
+              print("")
+              print("❌ UNKNOWN DIPR RESPONSE")
+              print("========================================")
+              print(str(data)[:5000])
+              print("========================================")
 
               raise SystemExit(
                   "❌ DIPR API response समझ नहीं आया"
               )
 
 
-          if not records:
+          if not items:
 
               raise SystemExit(
-                  "❌ Sujas record नहीं मिला"
+                  "❌ Sujas data नहीं मिला"
               )
 
+
+          print(
+              "DIPR records found:",
+              len(items)
+          )
+
+
+          # ==========================================
+          # FIND PDF URL RECURSIVELY
+          # ==========================================
 
           def find_pdf(obj):
 
@@ -175,14 +235,18 @@ jobs:
 
                       if isinstance(value, str):
 
-                          v = value.lower()
+                          v = value.strip().lower()
 
                           if (
                               ".pdf" in v
                               and (
-                                  v.startswith("http://")
+                                  v.startswith(
+                                      "http://"
+                                  )
                                   or
-                                  v.startswith("https://")
+                                  v.startswith(
+                                      "https://"
+                                  )
                               )
                           ):
 
@@ -211,18 +275,16 @@ jobs:
 
 
           selected = None
-
           pdf_url = None
 
 
-          for record in records:
+          for record in items:
 
               found = find_pdf(record)
 
               if found:
 
                   selected = record
-
                   pdf_url = found
 
                   break
@@ -230,69 +292,90 @@ jobs:
 
           if not pdf_url:
 
+              print("")
+              print("❌ कोई PDF URL नहीं मिला")
+              print("========================================")
+              print(
+                  "FIRST RECORD PREVIEW:"
+              )
+              print(
+                  str(items[0])[:5000]
+              )
+              print("========================================")
+
               raise SystemExit(
                   "❌ Sujas PDF URL नहीं मिला"
               )
 
 
+          # ==========================================
+          # FIND ORDER ID
+          # ==========================================
+
           order_id = ""
 
 
-          for key in [
+          if isinstance(selected, dict):
 
-              "Id",
-              "ID",
-              "id",
-              "OrderId",
-              "OrderID",
-              "orderId"
+              for key in [
+                  "Id",
+                  "ID",
+                  "id",
+                  "OrderId",
+                  "OrderID",
+                  "orderId"
+              ]:
 
-          ]:
+                  if key in selected:
 
-              if key in selected:
+                      value = selected[key]
 
-                  order_id = str(
-                      selected[key]
-                  )
+                      if value is not None:
 
-                  break
+                          order_id = str(value)
+
+                      break
 
 
-          print(
-              "========================================"
-          )
+          # ==========================================
+          # FIND TITLE
+          # ==========================================
 
-          print(
-              "SUJAS PDF FOUND"
-          )
+          title = "Latest Sujas"
 
-          print(
-              "========================================"
-          )
 
-          print(
-              "ORDER ID:",
-              order_id
-          )
+          if isinstance(selected, dict):
 
-          print(
-              "PDF:",
-              pdf_url
-          )
+              title = (
+                  selected.get("Title")
+                  or selected.get("title")
+                  or title
+              )
 
-          print(
-              "========================================"
-          )
+
+          print("")
+          print("========================================")
+          print("SUJAS PDF FOUND")
+          print("========================================")
+          print("TITLE:", title)
+          print("ORDER ID:", order_id)
+          print("PDF:", pdf_url)
+          print("========================================")
 
 
           # ==========================================
           # DOWNLOAD PDF
           # ==========================================
 
+          print("")
+          print("Downloading PDF...")
+
+
           pdf_response = requests.get(
               pdf_url,
-              timeout=90
+              timeout=180
           )
+
 
           pdf_response.raise_for_status()
 
@@ -307,15 +390,30 @@ jobs:
           )
 
 
+          pdf_size = pdf_path.stat().st_size
+
+
           print(
-              "✅ PDF downloaded:",
-              pdf_path.stat().st_size,
+              "PDF size:",
+              pdf_size,
               "bytes"
           )
 
 
+          if pdf_size == 0:
+
+              raise SystemExit(
+                  "❌ Downloaded PDF खाली है"
+              )
+
+
+          print(
+              "✅ PDF successfully downloaded"
+          )
+
+
           # ==========================================
-          # OUTPUTS
+          # GITHUB OUTPUTS
           # ==========================================
 
           with open(
@@ -334,6 +432,10 @@ jobs:
 
               output.write(
                   f"order_id={order_id}\n"
+              )
+
+              output.write(
+                  f"title={title}\n"
               )
 
 
@@ -365,6 +467,10 @@ jobs:
           fi
 
 
+          echo "========================================"
+          echo "SUJAS DUPLICATE CHECK"
+          echo "========================================"
+
           echo "OLD SUJAS ID: ${OLD_ID:-NONE}"
 
           echo "CURRENT SUJAS ID: ${CURRENT_ID:-NONE}"
@@ -373,12 +479,14 @@ jobs:
           if [ -n "$CURRENT_ID" ] &&
              [ "$OLD_ID" = "$CURRENT_ID" ]; then
 
+            echo ""
             echo "⏭️ SAME SUJAS — ALREADY PROCESSED"
 
             echo "new_sujas=false" >> "$GITHUB_OUTPUT"
 
           else
 
+            echo ""
             echo "🆕 NEW SUJAS"
 
             echo "new_sujas=true" >> "$GITHUB_OUTPUT"
@@ -413,7 +521,6 @@ jobs:
 
           ORDER_ID:
             ${{ steps.find_pdf.outputs.order_id }}
-
 
         run: |
 
@@ -459,6 +566,24 @@ jobs:
 
 
           # ==========================================
+          # CHECK CONFIGURATION
+          # ==========================================
+
+          if not API_KEY:
+
+              raise SystemExit(
+                  "❌ GEMINI_API_KEY secret नहीं मिला"
+              )
+
+
+          if not BOT_TOKEN:
+
+              raise SystemExit(
+                  "❌ CURRENT_AFFAIRS_BOT_TOKEN secret नहीं मिला"
+              )
+
+
+          # ==========================================
           # CHECK PDF
           # ==========================================
 
@@ -479,6 +604,9 @@ jobs:
               )
 
 
+          print("========================================")
+          print("GEMINI PROCESSING")
+          print("========================================")
           print(
               "PDF size:",
               len(pdf_bytes),
@@ -492,41 +620,45 @@ jobs:
 
           prompt = r"""
 
-          तुम Rajasthan competitive examinations के लिए
-          Current Affairs expert हो।
+तुम Rajasthan competitive examinations के लिए
+Current Affairs expert हो।
 
-          यह PDF Rajasthan Government के Sujas e-Bulletin
-          का source document है।
+यह PDF Rajasthan Government के Sujas e-Bulletin
+का source document है।
 
-          केवल इसी PDF में मौजूद information का उपयोग करो।
+केवल इसी PDF में मौजूद information का उपयोग करो।
 
-          IMPORTANT:
+IMPORTANT:
 
-          - कोई fact अपनी तरफ से मत बनाना।
-          - PDF के बाहर की current affairs मत जोड़ना।
-          - यदि कोई information स्पष्ट नहीं है तो उसे छोड़ना।
-          - केवल exam-relevant information लेना।
-          - Rajasthan-related facts को प्राथमिकता देना।
-          - नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
-            पुरस्कार, खेल, व्यक्ति, स्थान, अर्थव्यवस्था,
-            कृषि, शिक्षा, स्वास्थ्य, पर्यावरण, उद्योग,
-            निवेश, infrastructure, reports, science &
-            technology, AI और digital developments जैसी
-            जानकारी शामिल की जा सकती है।
-          - Generic national news को छोड़ना जब तक उसका
-            Rajasthan से सीधा संबंध न हो।
-          - Duplicate facts नहीं बनाने।
-          - प्रश्न RPSC/RSSB परीक्षा के स्तर के हों।
-          - भाषा साफ एवं शुद्ध हिंदी हो।
-          - प्रत्येक प्रश्न के 4 विकल्प हों।
-          - केवल एक सही उत्तर हो।
-          - उत्तर PDF की information से ही होना चाहिए।
-          - यदि page number उपलब्ध हो तो page field में दो।
-          - source हमेशा "Sujas" रखो।
+- कोई fact अपनी तरफ से मत बनाना।
+- PDF के बाहर की current affairs मत जोड़ना।
+- यदि कोई information स्पष्ट नहीं है तो उसे छोड़ना।
+- केवल exam-relevant information लेना।
+- Rajasthan-related facts को प्राथमिकता देना।
+- नियुक्तियाँ, योजनाएँ, नीतियाँ, कार्यक्रम,
+  पुरस्कार, खेल, व्यक्ति, स्थान, अर्थव्यवस्था,
+  कृषि, शिक्षा, स्वास्थ्य, पर्यावरण, उद्योग,
+  निवेश, infrastructure, reports, science &
+  technology, AI और digital developments जैसी
+  जानकारी शामिल की जा सकती है।
+- Generic national news को छोड़ना जब तक उसका
+  Rajasthan से सीधा संबंध न हो।
+- Duplicate facts नहीं बनाने।
+- प्रश्न RPSC/RSSB परीक्षा के स्तर के हों।
+- भाषा साफ एवं शुद्ध हिंदी हो।
+- प्रत्येक प्रश्न के 4 विकल्प हों।
+- केवल एक सही उत्तर हो।
+- उत्तर PDF की information से ही होना चाहिए।
+- यदि page number उपलब्ध हो तो page field में दो।
+- source हमेशा "Sujas" रखो।
+- प्रश्नों में केवल वही तथ्य इस्तेमाल करो जो
+  PDF में स्पष्ट रूप से मौजूद हैं।
+- एक ही fact पर कई लगभग समान प्रश्न मत बनाओ।
+- प्रश्नों की quality quantity से अधिक महत्वपूर्ण है।
 
-          केवल valid JSON output दो।
+केवल valid JSON output दो।
 
-          """
+"""
 
 
           # ==========================================
@@ -646,9 +778,7 @@ jobs:
                       "parts": [
 
                           {
-
                               "text": prompt
-
                           },
 
                           {
@@ -702,7 +832,8 @@ jobs:
           ):
 
               print(
-                  f"Gemini attempt {attempt}/{MAX_ATTEMPTS}"
+                  f"Gemini attempt "
+                  f"{attempt}/{MAX_ATTEMPTS}"
               )
 
 
@@ -749,7 +880,7 @@ jobs:
 
 
                   print(
-                      response.text[:1000]
+                      response.text[:1500]
                   )
 
 
@@ -767,11 +898,10 @@ jobs:
                           10 * attempt
                       )
 
-
                       print(
-                          f"⏳ Waiting {wait_time}s..."
+                          f"⏳ Waiting "
+                          f"{wait_time}s..."
                       )
-
 
                       time.sleep(
                           wait_time
@@ -809,7 +939,7 @@ jobs:
 
 
           # ==========================================
-          # EXTRACT RESPONSE
+          # EXTRACT GEMINI RESPONSE
           # ==========================================
 
           candidates = gemini_data.get(
@@ -819,6 +949,14 @@ jobs:
 
 
           if not candidates:
+
+              print(
+                  json.dumps(
+                      gemini_data,
+                      ensure_ascii=False,
+                      indent=2
+                  )[:5000]
+              )
 
               raise SystemExit(
                   "❌ Gemini candidate नहीं मिला"
@@ -851,9 +989,27 @@ jobs:
               )
 
 
-          result = json.loads(
-              text
-          )
+          # ==========================================
+          # JSON PARSE
+          # ==========================================
+
+          try:
+
+              result = json.loads(
+                  text
+              )
+
+          except json.JSONDecodeError:
+
+              print(
+                  "Gemini raw response:"
+              )
+
+              print(
+                  text[:5000]
+              )
+
+              raise
 
 
           items = result.get(
@@ -894,6 +1050,11 @@ jobs:
           )
 
 
+          print(
+              "✅ current_affairs.json saved"
+          )
+
+
           # ==========================================
           # TELEGRAM
           # ==========================================
@@ -915,11 +1076,32 @@ jobs:
           ):
 
 
+              category = item.get(
+                  "category",
+                  ""
+              )
+
+
               message = (
 
                   "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
 
                   "━━━━━━━━━━━━━━━━━━\n\n"
+
+              )
+
+
+              if category:
+
+                  message += (
+
+                      f"🏷️ <b>Category:</b> "
+                      f"{category}\n\n"
+
+                  )
+
+
+              message += (
 
                   f"<b>प्रश्न {index}.</b> "
                   f"{item.get('question', '')}\n\n"
@@ -969,7 +1151,7 @@ jobs:
 
 
               # ==========================================
-              # TELEGRAM MESSAGE SAFETY
+              # TELEGRAM MESSAGE LENGTH
               # ==========================================
 
               if len(message) > 4000:
@@ -1037,14 +1219,10 @@ jobs:
 
 
               print(
-
                   f"✅ Telegram message "
                   f"{index} sent"
-
               )
 
-
-              # Telegram rate safety
 
               time.sleep(0.5)
 
@@ -1064,27 +1242,19 @@ jobs:
           )
 
 
-          print(
-              "========================================"
-          )
-
-          print(
-              "✅ SUJAS CURRENT AFFAIRS COMPLETE"
-          )
-
+          print("")
+          print("========================================")
+          print("✅ SUJAS CURRENT AFFAIRS COMPLETE")
+          print("========================================")
           print(
               "✅ MCQs:",
               len(items)
           )
-
           print(
               "✅ TELEGRAM SENT:",
               sent
           )
-
-          print(
-              "========================================"
-          )
+          print("========================================")
 
 
           PY
