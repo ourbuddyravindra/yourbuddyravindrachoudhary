@@ -2,9 +2,15 @@ name: Rajasthan Sujas Auto Upload
 
 on:
   schedule:
-    - cron: '17 * * * *'
+    - cron: '17 21,22,23 * * *'
+      timezone: "Asia/Kolkata"
+    - cron: '17 0 * * *'
       timezone: "Asia/Kolkata"
   workflow_dispatch:
+
+concurrency:
+  group: sujas-auto
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -16,6 +22,8 @@ jobs:
     steps:
       - name: Repository checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v7
@@ -74,10 +82,8 @@ jobs:
 
           r = requests.post(API, json=payload, timeout=60)
           r.raise_for_status()
-
           data = r.json()
 
-          # API response structure के अनुसार latest item निकालना
           items = data.get("Data") or data.get("data") or data
 
           if isinstance(items, dict):
@@ -89,6 +95,7 @@ jobs:
           latest = items[0]
 
           title = latest.get("Title") or latest.get("title") or "Latest Sujas"
+
           order_id = str(
               latest.get("Id")
               or latest.get("ID")
@@ -97,23 +104,9 @@ jobs:
               or ""
           )
 
-          print("Latest:", title)
+          print("Latest Sujas:", title)
           print("ID:", order_id)
 
-          if not order_id:
-              raise Exception("Latest Sujas ID नहीं मिला")
-
-          state_file = "latest_sujas_id.txt"
-
-          old_id = ""
-          if os.path.exists(state_file):
-              old_id = open(state_file, encoding="utf-8").read().strip()
-
-          if old_id == order_id:
-              print("नया Sujas नहीं आया.")
-              raise SystemExit(0)
-
-          # AttachmentList से PDF ढूँढना
           attachments = (
               latest.get("AttachmentList")
               or latest.get("attachmentList")
@@ -136,13 +129,29 @@ jobs:
 
           print("PDF:", pdf_url)
 
-          pdf = requests.get(pdf_url, timeout=120)
+          # Duplicate protection:
+          # ID + PDF URL दोनों को unique key बनाया गया है.
+          current_key = order_id + "|" + pdf_url
+
+          state_file = "latest_sujas_key.txt"
+
+          old_key = ""
+          if os.path.exists(state_file):
+              old_key = open(state_file, encoding="utf-8").read().strip()
+
+          if old_key == current_key:
+              print("⏭️ यह Sujas पहले ही upload हो चुकी है. Skip.")
+              raise SystemExit(0)
+
+          print("🆕 नया Sujas मिला. PDF download हो रहा है...")
+
+          pdf = requests.get(pdf_url, timeout=180)
           pdf.raise_for_status()
 
           with open("sujas.pdf", "wb") as f:
               f.write(pdf.content)
 
-          print("PDF downloaded:", len(pdf.content), "bytes")
+          print("PDF size:", len(pdf.content), "bytes")
 
           telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
 
@@ -156,7 +165,7 @@ jobs:
                   files={
                       "document": ("sujas.pdf", f, "application/pdf")
                   },
-                  timeout=180
+                  timeout=240
               )
 
           response.raise_for_status()
@@ -168,19 +177,20 @@ jobs:
 
           print("✅ Sujas successfully Channel पर भेज दिया!")
 
+          # Telegram upload सफल होने के बाद ही state save होगा.
           with open(state_file, "w", encoding="utf-8") as f:
-              f.write(order_id)
+              f.write(current_key)
 
           PY
 
-      - name: Save latest Sujas ID
+      - name: Save duplicate-protection state
         run: |
-          if git diff --quiet latest_sujas_id.txt; then
-            echo "No new ID to save."
+          if git diff --quiet latest_sujas_key.txt; then
+            echo "No new Sujas state to save."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add latest_sujas_id.txt
-            git commit -m "Update latest Sujas ID"
+            git add latest_sujas_key.txt
+            git commit -m "Save latest Sujas upload state"
             git push
           fi
