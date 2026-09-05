@@ -15,7 +15,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Detect and save latest Rajasthan video
+      - name: Detect latest Rajasthan Current Affairs video
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
@@ -27,8 +27,10 @@ jobs:
           KEY = os.environ["YOUTUBE_API_KEY"]
           STATE_FILE = Path("meridian_latest_video.txt")
 
-          # 1. Get Meridian Academy channel
-          r = requests.get(
+          # ----------------------------------------
+          # 1. Meridian Academy channel
+          # ----------------------------------------
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/channels",
               params={
                   "part": "contentDetails",
@@ -37,43 +39,52 @@ jobs:
               },
               timeout=20
           )
-          r.raise_for_status()
+          response.raise_for_status()
 
-          channel = r.json()["items"][0]
-          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+          data = response.json()
 
-          # 2. Get latest uploads
-          r = requests.get(
+          if not data.get("items"):
+              raise SystemExit("❌ Meridian Academy channel नहीं मिला")
+
+          channel = data["items"][0]
+          uploads_playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+
+          # ----------------------------------------
+          # 2. Latest uploads
+          # ----------------------------------------
+          response = requests.get(
               "https://www.googleapis.com/youtube/v3/playlistItems",
               params={
                   "part": "snippet,contentDetails",
-                  "playlistId": uploads,
+                  "playlistId": uploads_playlist,
                   "maxResults": 10,
                   "key": KEY
               },
               timeout=20
           )
-          r.raise_for_status()
+          response.raise_for_status()
 
-          items = r.json().get("items", [])
+          items = response.json().get("items", [])
 
-          # 3. Find latest Rajasthan Current Affairs / SUJAS video
+          # ----------------------------------------
+          # 3. Find latest Rajasthan Current Affairs
+          # ----------------------------------------
           selected = None
 
           for item in items:
               title = item["snippet"]["title"]
-              t = title.lower()
+              title_lower = title.lower()
 
               if (
-                  "rajasthan current affairs" in t
-                  or ("rajasthan" in t and "sujas" in t)
+                  "rajasthan current affairs" in title_lower
+                  or ("rajasthan" in title_lower and "sujas" in title_lower)
               ):
                   selected = item
                   break
 
           if selected is None:
               raise SystemExit(
-                  "❌ Rajasthan Current Affairs video नहीं मिला"
+                  "❌ Latest uploads में Rajasthan Current Affairs video नहीं मिला"
               )
 
           video_id = selected["contentDetails"]["videoId"]
@@ -83,7 +94,9 @@ jobs:
               selected["snippet"]["publishedAt"]
           )
 
-          # 4. Read previously processed video
+          # ----------------------------------------
+          # 4. Read previous ID
+          # ----------------------------------------
           old_id = ""
 
           if STATE_FILE.exists():
@@ -91,16 +104,22 @@ jobs:
                   encoding="utf-8"
               ).strip()
 
+          print("========================================")
           print("OLD VIDEO ID:", old_id or "NONE")
           print("NEW VIDEO ID:", video_id)
           print("TITLE:", title)
           print("PUBLISHED:", published)
+          print("========================================")
 
+          # ----------------------------------------
           # 5. Duplicate check
+          # ----------------------------------------
           if old_id == video_id:
               print()
-              print("⏭️ SAME VIDEO — ALREADY PROCESSED")
-              print("No new processing required.")
+              print("⏭️ SAME VIDEO")
+              print("Already processed.")
+              print("No state change required.")
+
           else:
               print()
               print("🆕 NEW RAJASTHAN VIDEO FOUND")
@@ -111,24 +130,29 @@ jobs:
                   encoding="utf-8"
               )
 
-              print("✅ Video ID saved")
+              print("✅ State file updated")
 
           print()
-          print("URL:")
+          print("VIDEO URL:")
           print(f"https://www.youtube.com/watch?v={video_id}")
+          print("========================================")
           PY
 
-      - name: Commit updated video state
+      # ----------------------------------------
+      # 6. Save state file to GitHub
+      # ----------------------------------------
+      - name: Save video state
         run: |
-          if git diff --quiet -- meridian_latest_video.txt; then
-            echo "No state change."
+          git add meridian_latest_video.txt
+
+          if git diff --cached --quiet; then
+            echo "⏭️ No state change."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-            git add meridian_latest_video.txt
             git commit -m "Update Meridian latest video"
             git push
 
-            echo "✅ State file committed."
+            echo "✅ State file committed to GitHub."
           fi
