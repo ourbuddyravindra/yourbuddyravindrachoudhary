@@ -12,23 +12,23 @@ jobs:
 
     steps:
 
-      # ==========================================
+      # ============================================
       # 1. Checkout
-      # ==========================================
+      # ============================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ==========================================
+      # ============================================
       # 2. Python
-      # ==========================================
+      # ============================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # ==========================================
-      # 3. OCR software
-      # ==========================================
+      # ============================================
+      # 3. OCR tools
+      # ============================================
       - name: Install OCR tools
         run: |
           sudo apt-get update
@@ -38,17 +38,17 @@ jobs:
             tesseract-ocr-hin \
             tesseract-ocr-eng
 
-      # ==========================================
+      # ============================================
       # 4. Python packages
-      # ==========================================
+      # ============================================
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install google-genai requests pillow
+          pip install google-genai requests
 
-      # ==========================================
-      # 5. Download latest Sujas PDF
-      # ==========================================
+      # ============================================
+      # 5. Download latest Sujas
+      # ============================================
       - name: Download latest Sujas
         run: |
           python - <<'PY'
@@ -56,6 +56,7 @@ jobs:
           import json
           import sys
           import re
+          from datetime import datetime
 
           API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
@@ -107,26 +108,20 @@ jobs:
 
           print("API response received")
 
-          # ------------------------------------------
-          # Recursively find all dictionaries
-          # ------------------------------------------
+          # --------------------------------------------
+          # Recursively inspect API response
+          # --------------------------------------------
           def walk(obj):
-
               if isinstance(obj, dict):
                   yield obj
-
                   for value in obj.values():
                       yield from walk(value)
 
               elif isinstance(obj, list):
-
                   for value in obj:
                       yield from walk(value)
 
-          # ------------------------------------------
-          # Find Sujas records
-          # ------------------------------------------
-          sujas_records = []
+          sujas = []
 
           for item in walk(data):
 
@@ -137,6 +132,9 @@ jobs:
                   item.get("Title") or ""
               ).strip()
 
+              if "सुजस" not in title:
+                  continue
+
               attachments = item.get(
                   "AttachmentList"
               )
@@ -145,9 +143,6 @@ jobs:
                   attachments,
                   list
               ):
-                  continue
-
-              if "सुजस" not in title:
                   continue
 
               for attachment in attachments:
@@ -166,7 +161,7 @@ jobs:
                   if not path:
                       continue
 
-                  sujas_records.append({
+                  sujas.append({
                       "id": item.get("Id"),
                       "title": title,
                       "date": item.get("Date"),
@@ -178,63 +173,69 @@ jobs:
                   })
 
           print(
-              "Sujas records found:",
-              len(sujas_records)
+              "Sujas candidates:",
+              len(sujas)
           )
 
-          if not sujas_records:
-              print(
-                  "ERROR: No Sujas PDF found"
-              )
+          if not sujas:
+              print("ERROR: Sujas PDF not found")
               sys.exit(1)
 
-          # ------------------------------------------
-          # Sort by date / ID
-          # ------------------------------------------
-          def sort_key(x):
+          # --------------------------------------------
+          # Newest Sujas
+          # --------------------------------------------
+          def sort_key(item):
 
-              return (
-                  str(x.get("date") or ""),
-                  int(x.get("id") or 0)
+              date_value = str(
+                  item.get("date") or ""
               )
 
-          sujas_records.sort(
+              try:
+                  parsed = datetime.fromisoformat(
+                      date_value.replace(
+                          "Z",
+                          "+00:00"
+                      )
+                  )
+
+                  timestamp = parsed.timestamp()
+
+              except Exception:
+                  timestamp = 0
+
+              try:
+                  item_id = int(
+                      item.get("id") or 0
+                  )
+              except Exception:
+                  item_id = 0
+
+              return (
+                  timestamp,
+                  item_id
+              )
+
+          sujas.sort(
               key=sort_key,
               reverse=True
           )
 
-          selected = sujas_records[0]
-
-          print()
-          print("==========================================")
-          print("SELECTED SUJAS")
-          print("==========================================")
-
-          print(
-              json.dumps(
-                  selected,
-                  ensure_ascii=False,
-                  indent=2
-              )
-          )
+          selected = sujas[0]
 
           pdf_url = str(
               selected["path"]
           ).strip()
 
-          # ------------------------------------------
-          # Extract URL if API returns Markdown link
-          # ------------------------------------------
-          markdown_match = re.search(
+          # --------------------------------------------
+          # Extract URL from Markdown if required
+          # --------------------------------------------
+          match = re.search(
               r"\]\((https?://[^)]+)\)",
               pdf_url
           )
 
-          if markdown_match:
-              pdf_url = markdown_match.group(1)
-
-          # Remove accidental spaces
-          pdf_url = pdf_url.strip()
+          if match:
+              pdf_url = match.group(1)
 
           if not pdf_url.startswith(
               "http://"
@@ -247,13 +248,24 @@ jobs:
               print(pdf_url)
               sys.exit(1)
 
-          print()
-          print("PDF URL:")
-          print(pdf_url)
+          selected["pdf_url"] = pdf_url
 
-          # ------------------------------------------
-          # Download
-          # ------------------------------------------
+          print()
+          print("========================================")
+          print("SELECTED SUJAS")
+          print("========================================")
+
+          print(
+              json.dumps(
+                  selected,
+                  ensure_ascii=False,
+                  indent=2
+              )
+          )
+
+          # --------------------------------------------
+          # Download PDF
+          # --------------------------------------------
           print()
           print("Downloading PDF...")
 
@@ -271,20 +283,16 @@ jobs:
           content = pdf_response.content
 
           print(
-              "Downloaded:",
-              len(content),
-              "bytes"
+              "Downloaded bytes:",
+              len(content)
           )
 
-          # ------------------------------------------
-          # Validate PDF
-          # ------------------------------------------
           if not content.startswith(
               b"%PDF"
           ):
               print(
                   "ERROR: Downloaded file "
-                  "is not a valid PDF"
+                  "is not a PDF"
               )
               sys.exit(1)
 
@@ -293,8 +301,6 @@ jobs:
               "wb"
           ) as f:
               f.write(content)
-
-          selected["pdf_url"] = pdf_url
 
           with open(
               "sujas_metadata.json",
@@ -314,9 +320,9 @@ jobs:
           )
           PY
 
-      # ==========================================
-      # 6. Convert PDF → images
-      # ==========================================
+      # ============================================
+      # 6. PDF → JPG pages
+      # ============================================
       - name: Convert PDF to images
         run: |
           mkdir -p pages
@@ -328,12 +334,12 @@ jobs:
             sujas_today.pdf \
             pages/page
 
-          echo "Generated pages:"
+          echo "Pages generated:"
           ls -lh pages/
 
-      # ==========================================
+      # ============================================
       # 7. OCR
-      # ==========================================
+      # ============================================
       - name: OCR pages
         run: |
           python - <<'PY'
@@ -347,7 +353,7 @@ jobs:
 
           if not images:
               raise RuntimeError(
-                  "No page images generated"
+                  "No page images found"
               )
 
           results = []
@@ -407,91 +413,368 @@ jobs:
 
           print()
           print(
-              "OCR complete."
+              "OCR completed."
           )
 
           print(
-              "Pages:",
+              "Total pages:",
               len(results)
           )
           PY
 
-      # ==========================================
-      # 8. Extract facts using Gemini
-      # ==========================================
+      # ============================================
+      # 8. Gemini FACT EXTRACTION
+      # ============================================
       - name: Extract verified facts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.5-flash-lite
         run: |
-          python extract_facts.py
-
-      # ==========================================
-      # 9. Display result
-      # ==========================================
-      - name: Display verified facts
-        run: |
           python - <<'PY'
+          import os
           import json
+          import time
+          from google import genai
+          from google.genai import types
+
+          API_KEY = os.environ["GEMINI_API_KEY"]
+
+          MODEL = os.environ.get(
+              "GEMINI_MODEL",
+              "gemini-3.5-flash-lite"
+          )
+
+          client = genai.Client(
+              api_key=API_KEY
+          )
+
+          # ------------------------------------------
+          # JSON schema
+          # ------------------------------------------
+          schema = {
+              "type": "object",
+              "properties": {
+                  "facts": {
+                      "type": "array",
+                      "items": {
+                          "type": "object",
+                          "properties": {
+                              "fact": {
+                                  "type": "string"
+                              },
+                              "category": {
+                                  "type": "string"
+                              },
+                              "page": {
+                                  "type": "integer"
+                              },
+                              "evidence": {
+                                  "type": "string"
+                              }
+                          },
+                          "required": [
+                              "fact",
+                              "category",
+                              "page",
+                              "evidence"
+                          ]
+                      }
+                  }
+              },
+              "required": [
+                  "facts"
+              ]
+          }
 
           with open(
-              "verified_facts.json",
+              "ocr_pages.json",
               "r",
               encoding="utf-8"
           ) as f:
-              data = json.load(f)
+              pages = json.load(f)
 
-          facts = data.get(
-              "facts",
-              []
-          )
+          all_facts = []
+
+          for page_data in pages:
+
+              page_number = int(
+                  page_data["page"]
+              )
+
+              text = str(
+                  page_data.get(
+                      "text",
+                      ""
+                  )
+              ).strip()
+
+              if not text:
+                  print(
+                      f"Page {page_number}: "
+                      "empty OCR"
+                  )
+                  continue
+
+              print()
+              print(
+                  f"Processing page {page_number}..."
+              )
+
+              prompt = f"""
+तुम राजस्थान प्रतियोगी परीक्षाओं के लिए
+CURRENT AFFAIRS FACT EXTRACTOR हो।
+
+यह राजस्थान सरकार के DIPR द्वारा जारी
+Sujas e-Bulletin का Page {page_number} है।
+
+तुम्हें केवल इसी page से महत्वपूर्ण
+exam-oriented FACTS निकालने हैं।
+
+बहुत महत्वपूर्ण नियम:
+
+1. केवल दिए गए OCR text पर आधारित रहो।
+2. अपनी तरफ से कोई तथ्य मत जोड़ो।
+3. इंटरनेट या अपनी सामान्य जानकारी का उपयोग मत करो।
+4. यदि OCR में कोई नाम/संख्या/शब्द अस्पष्ट है,
+   तो अनुमान मत लगाओ।
+5. हर fact का page {page_number} ही होना चाहिए।
+6. हर fact के साथ source evidence देना अनिवार्य है।
+7. Evidence उसी page के OCR text से होना चाहिए।
+8. सामान्य समाचार वाक्य छोड़ दो।
+9. Exam-oriented महत्वपूर्ण बातें प्राथमिकता से निकालो।
+10. एक ही तथ्य को दो बार मत निकालो।
+11. MCQ मत बनाओ।
+12. Options मत बनाओ।
+13. Answer मत बनाओ।
+
+विशेष रूप से इन प्रकार के facts खोजो:
+
+- नियुक्तियाँ
+- महत्वपूर्ण व्यक्ति
+- योजनाएँ
+- कार्यक्रम
+- नीतियाँ
+- प्रशासनिक निर्णय
+- चुनाव
+- शिक्षा
+- स्वास्थ्य
+- कृषि
+- खेल
+- पुरस्कार
+- अर्थव्यवस्था
+- बजट
+- पर्यावरण
+- विज्ञान एवं तकनीक
+- आधारभूत संरचना
+- जिले से संबंधित महत्वपूर्ण तथ्य
+- स्थान
+- संस्थाएँ
+- महत्वपूर्ण आँकड़े
+- महत्वपूर्ण तिथियाँ
+
+हर fact में:
+fact = साफ exam-oriented तथ्य
+category = उपयुक्त category
+page = {page_number}
+evidence = source में मौजूद छोटा supporting text
+
+PAGE {page_number} OCR:
+
+{text}
+"""
+
+              success = False
+
+              for attempt in range(4):
+
+                  try:
+
+                      response = client.models.generate_content(
+                          model=MODEL,
+                          contents=prompt,
+                          config=types.GenerateContentConfig(
+                              response_mime_type="application/json",
+                              response_schema=schema,
+                              temperature=0.1
+                          )
+                      )
+
+                      raw = response.text
+
+                      data = json.loads(raw)
+
+                      facts = data.get(
+                          "facts",
+                          []
+                      )
+
+                      valid = []
+
+                      for item in facts:
+
+                          if not isinstance(
+                              item,
+                              dict
+                          ):
+                              continue
+
+                          fact = str(
+                              item.get(
+                                  "fact",
+                                  ""
+                              )
+                          ).strip()
+
+                          category = str(
+                              item.get(
+                                  "category",
+                                  ""
+                              )
+                          ).strip()
+
+                          evidence = str(
+                              item.get(
+                                  "evidence",
+                                  ""
+                              )
+                          ).strip()
+
+                          try:
+                              page = int(
+                                  item.get(
+                                      "page",
+                                      page_number
+                                  )
+                              )
+                          except Exception:
+                              page = page_number
+
+                          # --------------------------------
+                          # Basic validation
+                          # --------------------------------
+                          if not fact:
+                              continue
+
+                          if not evidence:
+                              continue
+
+                          if page != page_number:
+                              continue
+
+                          valid.append({
+                              "fact": fact,
+                              "category": category,
+                              "page": page,
+                              "evidence": evidence
+                          })
+
+                      print(
+                          f"Page {page_number}: "
+                          f"{len(valid)} facts"
+                      )
+
+                      all_facts.extend(
+                          valid
+                      )
+
+                      success = True
+                      break
+
+                  except Exception as e:
+
+                      print(
+                          f"Attempt {attempt + 1} "
+                          f"failed on page "
+                          f"{page_number}: {e}"
+                      )
+
+                      if attempt < 3:
+                          time.sleep(
+                              2 ** attempt
+                          )
+
+              if not success:
+
+                  print(
+                      f"Page {page_number}: "
+                      "Gemini failed after retries"
+                  )
+
+          # ------------------------------------------
+          # Remove duplicate facts
+          # ------------------------------------------
+          unique = []
+          seen = set()
+
+          for item in all_facts:
+
+              key = (
+                  item["fact"]
+                  .strip()
+                  .lower()
+              )
+
+              if key in seen:
+                  continue
+
+              seen.add(key)
+              unique.append(item)
+
+          output = {
+              "source": "Rajasthan Sujas",
+              "facts_count": len(unique),
+              "facts": unique
+          }
+
+          with open(
+              "verified_facts.json",
+              "w",
+              encoding="utf-8"
+          ) as f:
+              json.dump(
+                  output,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
 
           print()
           print("=" * 70)
           print(
-              "VERIFIED FACTS:",
-              len(facts)
+              "TOTAL VERIFIED FACTS:",
+              len(unique)
           )
           print("=" * 70)
 
           for i, item in enumerate(
-              facts,
+              unique,
               1
           ):
 
               print()
               print(
-                  f"{i}. {item.get('fact', '')}"
+                  f"{i}. {item['fact']}"
               )
 
               print(
-                  "   Category:",
-                  item.get(
-                      "category",
-                      ""
-                  )
+                  f"   Category: "
+                  f"{item['category']}"
               )
 
               print(
-                  "   Page:",
-                  item.get(
-                      "page",
-                      ""
-                  )
+                  f"   Page: "
+                  f"{item['page']}"
               )
 
               print(
-                  "   Evidence:",
-                  item.get(
-                      "evidence",
-                      ""
-                  )
+                  f"   Evidence: "
+                  f"{item['evidence']}"
               )
           PY
 
-      # ==========================================
-      # 10. Upload results
-      # ==========================================
+      # ============================================
+      # 9. Upload result
+      # ============================================
       - name: Upload extraction results
         uses: actions/upload-artifact@v4
         with:
