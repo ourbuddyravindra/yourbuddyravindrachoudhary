@@ -6,14 +6,21 @@ on:
 jobs:
   dipr-ai:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
+
+      # ============================================================
+      # 1. INSTALL
+      # ============================================================
       - name: Install tools
         run: |
           python -m pip install --upgrade pip
           pip install requests pypdf
 
+      # ============================================================
+      # 2. DOWNLOAD LATEST SUJAS PDF
+      # ============================================================
       - name: Download latest Sujas PDF
         run: |
           python - <<'PY'
@@ -21,7 +28,7 @@ jobs:
           import json
           from pathlib import Path
 
-          api = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+          API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -57,7 +64,7 @@ jobs:
               "Type": "10"
           }
 
-          r = requests.post(api, json=payload, timeout=30)
+          r = requests.post(API, json=payload, timeout=30)
           r.raise_for_status()
 
           data = r.json()
@@ -67,7 +74,11 @@ jobs:
                   return obj
 
               if isinstance(obj, dict):
-                  for key in ["Data", "data", "Result", "result", "Items", "items"]:
+                  for key in [
+                      "Data", "data",
+                      "Result", "result",
+                      "Items", "items"
+                  ]:
                       if key in obj and isinstance(obj[key], list):
                           return obj[key]
 
@@ -88,52 +99,54 @@ jobs:
           selected = None
 
           for item in records:
-              text = json.dumps(item, ensure_ascii=False).lower()
+              title = str(item.get("Title", ""))
 
-              if "सुजस" in text and "बुलेटिन" in text:
+              if "सुजस" in title and "बुलेटिन" in title:
                   selected = item
                   break
 
           if selected is None:
-              selected = records[0]
+              raise SystemExit("Latest Sujas bulletin नहीं मिला")
 
-          print("\nSELECTED RECORD:")
-          print(json.dumps(selected, ensure_ascii=False, indent=2))
+          print("\nSELECTED:")
+          print(selected.get("Title"))
+          print("ORDER ID:", selected.get("Id"))
+          print("DATE:", selected.get("HindiDate"))
 
-          def find_pdf_urls(obj):
-              urls = []
+          attachments = selected.get("AttachmentList", [])
 
-              if isinstance(obj, str):
-                  if ".pdf" in obj.lower():
-                      urls.append(obj)
+          pdf_url = None
 
-              elif isinstance(obj, dict):
-                  for value in obj.values():
-                      urls.extend(find_pdf_urls(value))
+          for attachment in attachments:
+              path = attachment.get("Path", "")
 
-              elif isinstance(obj, list):
-                  for value in obj:
-                      urls.extend(find_pdf_urls(value))
+              if ".pdf" in path.lower():
+                  pdf_url = path
+                  break
 
-              return urls
+          if not pdf_url:
+              raise SystemExit("Sujas PDF URL नहीं मिला")
 
-          pdf_urls = find_pdf_urls(selected)
+          print("PDF URL:", pdf_url)
 
-          if not pdf_urls:
-              raise SystemExit("PDF URL नहीं मिला")
-
-          pdf_url = pdf_urls[0]
-
-          print("\nPDF URL:", pdf_url)
-
-          pdf = requests.get(pdf_url, timeout=60)
+          pdf = requests.get(pdf_url, timeout=90)
           pdf.raise_for_status()
 
           Path("sujas_today.pdf").write_bytes(pdf.content)
 
           print("PDF SIZE:", len(pdf.content), "bytes")
+
+          # Save metadata
+          Path("sujas_meta.json").write_text(
+              json.dumps(selected, ensure_ascii=False, indent=2),
+              encoding="utf-8"
+          )
+
           PY
 
+      # ============================================================
+      # 3. EXTRACT TEXT
+      # ============================================================
       - name: Extract PDF text
         run: |
           python - <<'PY'
@@ -144,25 +157,41 @@ jobs:
 
           print("PAGES:", len(reader.pages))
 
-          text = ""
+          all_text = []
 
           for page_no, page in enumerate(reader.pages, 1):
-              page_text = page.extract_text() or ""
-              text += f"\n\n--- PAGE {page_no} ---\n{page_text}"
+
+              text = page.extract_text() or ""
+
+              all_text.append(
+                  f"\n--- PAGE {page_no} ---\n{text}"
+              )
+
+          final_text = "\n".join(all_text)
 
           Path("sujas_text.txt").write_text(
-              text,
+              final_text,
               encoding="utf-8"
           )
 
-          print("TEXT CHARACTERS:", len(text))
+          print("TEXT CHARACTERS:", len(final_text))
 
           print("\n========== TEXT PREVIEW ==========\n")
-          print(text[:12000])
+          print(final_text[:10000])
           print("\n===================================\n")
+
+          if len(final_text.strip()) < 500:
+              print(
+                  "WARNING: PDF text बहुत कम है। "
+                  "यह scanned/image PDF हो सकती है।"
+              )
+
           PY
 
-      - name: Process with Gemini
+      # ============================================================
+      # 4. GEMINI AI PROCESSING
+      # ============================================================
+      - name: Process Sujas with Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -174,61 +203,83 @@ jobs:
           import requests
           from pathlib import Path
 
-          text = Path("sujas_text.txt").read_text(
+          API_KEY = os.environ["GEMINI_API_KEY"]
+
+          source = Path("sujas_text.txt").read_text(
               encoding="utf-8"
           )
 
-          # अभी testing के लिए limit
-          text = text[:60000]
+          # Test के लिए पर्याप्त text
+          # बाद में chunking लगाएँगे ताकि पूरा PDF process हो।
+          source = source[:50000]
 
           prompt = f"""
-          तुम RPSC और RSSB के लिए Current Affairs Editor हो।
+          तुम RPSC और RSSB के लिए professional Current Affairs editor हो।
 
-          नीचे राजस्थान सरकार के DIPR द्वारा जारी SUJAS
-          e-Bulletin का वास्तविक text दिया गया है।
+          नीचे राजस्थान सरकार के DIPR द्वारा प्रकाशित
+          SUJAS e-Bulletin का वास्तविक text दिया गया है।
+
+          तुम्हारा काम source से महत्वपूर्ण CURRENT AFFAIRS निकालना है।
 
           IMPORTANT RULES:
 
-          1. केवल source में मौजूद facts का उपयोग करो।
-          2. कोई नाम, तारीख, संख्या, पद या घटना अपनी तरफ से मत बनाओ।
-          3. महत्वपूर्ण exam-oriented facts निकालो।
-          4. एक ही fact को दोहराओ मत।
-          5. प्रश्न और answer source के fact पर आधारित होने चाहिए।
-          6. अगर कोई जानकारी अस्पष्ट है तो उसे छोड़ दो।
+          1. केवल source में मौजूद facts इस्तेमाल करो।
+          2. कोई नाम, तारीख, संख्या, पद या घटना invent मत करो।
+          3. एक fact को दोबारा मत दो।
+          4. महत्वपूर्ण और परीक्षा उपयोगी जानकारी को प्राथमिकता दो।
+          5. बहुत सामान्य या promotional content छोड़ दो।
+          6. अगर source में किसी fact की जानकारी अधूरी है,
+             तो उस fact को छोड़ दो।
+          7. हर answer source text से verify होने योग्य होना चाहिए।
 
           Categories:
-          - राजस्थान नियुक्तियां
-          - योजनाएं/कार्यक्रम
+
+          राजस्थान:
+          - नियुक्तियां
+          - योजनाएं
+          - कार्यक्रम
           - नीतियां
           - पुरस्कार
           - खेल
-          - व्यक्ति/स्थान/घटनाएं
-          - बजट/अर्थव्यवस्था
+          - व्यक्ति
+          - स्थान
+          - महत्वपूर्ण घटनाएं
+          - बजट
+          - अर्थव्यवस्था
           - कृषि
           - शिक्षा
           - स्वास्थ्य
           - पर्यावरण
-          - उद्योग/निवेश
-          - आधारभूत संरचना/विकास
-          - रिपोर्ट/सूचकांक
-          - विज्ञान एवं प्रौद्योगिकी
-          - AI/डिजिटल
+          - उद्योग
+          - निवेश
+          - infrastructure/development
+          - reports/indices
+          - science & technology
+          - AI/digital
 
-          प्रत्येक item में:
+          National/International:
+          - केवल तभी शामिल करो जब source में स्पष्ट रूप से
+            महत्वपूर्ण exam-oriented information हो।
+          - Science & Technology और महत्वपूर्ण international
+            developments को शामिल किया जा सकता है।
+
+          प्रत्येक Current Affair के लिए:
+
           title
           category
           fact
           question
-          4 options
-          correct answer
+          options
+          answer
 
-          भाषा: सरल और स्पष्ट हिंदी।
-          स्तर: RPSC/RSSB.
+          options में exactly 4 विकल्प होने चाहिए।
 
-          Output केवल valid JSON में दो।
+          भाषा:
+          सरल, साफ और प्रतियोगी परीक्षा के अनुकूल हिंदी।
 
           SOURCE TEXT:
-          {text}
+
+          {source}
           """
 
           schema = {
@@ -275,11 +326,6 @@ jobs:
               "required": ["items"]
           }
 
-          url = (
-              "https://generativelanguage.googleapis.com/v1beta/"
-              "models/gemini-3.5-flash-lite:generateContent"
-          )
-
           payload = {
               "contents": [
                   {
@@ -291,102 +337,111 @@ jobs:
                   }
               ],
               "generationConfig": {
-                  "temperature": 0.1,
                   "responseMimeType": "application/json",
                   "responseJsonSchema": schema
               }
           }
 
           headers = {
-              "x-goog-api-key": os.environ["GEMINI_API_KEY"],
+              "x-goog-api-key": API_KEY,
               "Content-Type": "application/json"
           }
 
-          max_retries = 6
+          # पहले Lite, फिर Flash fallback
+          models = [
+              "gemini-3.5-flash-lite",
+              "gemini-3.5-flash"
+          ]
+
+          success = False
           response = None
 
-          for attempt in range(max_retries):
+          for model in models:
 
-              print(
-                  f"\nGemini attempt "
-                  f"{attempt + 1}/{max_retries}"
+              print("\n================================")
+              print("TRYING MODEL:", model)
+              print("================================")
+
+              url = (
+                  "https://generativelanguage.googleapis.com/"
+                  "v1beta/models/"
+                  + model +
+                  ":generateContent"
               )
 
-              try:
-                  response = requests.post(
-                      url,
-                      headers=headers,
-                      json=payload,
-                      timeout=120
-                  )
+              for attempt in range(3):
 
                   print(
-                      "HTTP STATUS:",
-                      response.status_code
+                      f"Attempt {attempt + 1}/3"
                   )
 
-                  if response.status_code == 200:
-                      break
+                  try:
 
-                  if response.status_code in (
-                      429, 500, 502, 503, 504
-                  ):
-                      if attempt < max_retries - 1:
+                      response = requests.post(
+                          url,
+                          headers=headers,
+                          json=payload,
+                          timeout=90
+                      )
 
-                          base_delay = min(
-                              60,
-                              5 * (2 ** attempt)
-                          )
+                      print(
+                          "HTTP STATUS:",
+                          response.status_code
+                      )
 
-                          jitter = random.uniform(0, 3)
+                      if response.status_code == 200:
+                          success = True
+                          break
 
-                          wait = base_delay + jitter
+                      if response.status_code in (
+                          429, 500, 502, 503, 504
+                      ):
+
+                          wait = 5 * (2 ** attempt)
 
                           print(
-                              f"Temporary Gemini error. "
-                              f"Retrying in {wait:.1f} seconds..."
+                              f"Temporary error. "
+                              f"Waiting {wait} seconds..."
                           )
 
                           time.sleep(wait)
                           continue
 
-                  print(response.text)
-                  raise SystemExit(
-                      "Gemini request failed"
-                  )
+                      print(response.text)
+                      break
 
-              except requests.RequestException as e:
-
-                  print(
-                      "REQUEST ERROR:",
-                      str(e)
-                  )
-
-                  if attempt < max_retries - 1:
-
-                      wait = min(
-                          60,
-                          5 * (2 ** attempt)
-                      )
+                  except requests.RequestException as e:
 
                       print(
-                          f"Retrying in {wait} seconds..."
+                          "REQUEST ERROR:",
+                          str(e)
                       )
 
-                      time.sleep(wait)
+                      if attempt < 2:
+                          wait = 5 * (2 ** attempt)
+                          time.sleep(wait)
 
-                  else:
-                      raise
+              if success:
+                  print(
+                      "\nSUCCESS WITH MODEL:",
+                      model
+                  )
+                  break
 
-          if response is None or response.status_code != 200:
-              raise SystemExit(
-                  "Gemini failed after all retries"
+              print(
+                  "\nModel failed:",
+                  model
               )
 
-          result = response.json()
+          if not success:
+              raise SystemExit(
+                  "All Gemini models failed."
+              )
+
+          data = response.json()
 
           output = (
-              result["candidates"][0]
+              data["candidates"][0]
               ["content"]["parts"][0]["text"]
           )
 
@@ -402,9 +457,23 @@ jobs:
 
           parsed = json.loads(output)
 
+          items = parsed.get("items", [])
+
           print(
               "TOTAL CURRENT AFFAIRS:",
-              len(parsed.get("items", []))
+              len(items)
           )
+
+          # Basic validation
+          for i, item in enumerate(items, 1):
+
+              if len(item.get("options", [])) != 4:
+                  print(
+                      "WARNING: Item",
+                      i,
+                      "has",
+                      len(item.get("options", [])),
+                      "options"
+                  )
 
           PY
