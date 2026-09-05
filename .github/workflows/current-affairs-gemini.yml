@@ -1,0 +1,466 @@
+name: Current Affairs Gemini Processor
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ==========================================
+      # 2. GEMINI PROCESSING
+      # ==========================================
+      - name: Generate current affairs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+
+          python - <<'PY'
+
+          import json
+          import os
+          import requests
+          from pathlib import Path
+
+
+          INPUT_FILE = Path(
+              "approved_sources.json"
+          )
+
+          OUTPUT_FILE = Path(
+              "current_affairs.json"
+          )
+
+
+          # ==========================================
+          # LOAD SOURCE DATA
+          # ==========================================
+
+          if not INPUT_FILE.exists():
+
+              raise SystemExit(
+                  "❌ approved_sources.json नहीं मिला"
+              )
+
+
+          data = json.loads(
+              INPUT_FILE.read_text(
+                  encoding="utf-8"
+              )
+          )
+
+
+          items = data.get(
+              "items",
+              []
+          )
+
+
+          # ==========================================
+          # IMPORTANT SAFETY CHECK
+          # ==========================================
+
+          usable_items = []
+
+          for item in items:
+
+              content_status = item.get(
+                  "content_status",
+                  ""
+              )
+
+              if content_status != "metadata_only":
+
+                  usable_items.append(item)
+
+
+          print(
+              "Total collected items:",
+              len(items)
+          )
+
+          print(
+              "Usable content items:",
+              len(usable_items)
+          )
+
+
+          # अभी वास्तविक source text उपलब्ध नहीं है
+          # इसलिए Gemini को facts invent करने नहीं देंगे.
+
+          if not usable_items:
+
+              result = {
+
+                  "status": "waiting_for_source_content",
+
+                  "message": (
+                      "Approved sources से अभी वास्तविक "
+                      "current-affairs text उपलब्ध नहीं है. "
+                      "Gemini ने कोई तथ्य generate नहीं किया."
+                  ),
+
+                  "items": []
+
+              }
+
+
+              OUTPUT_FILE.write_text(
+
+                  json.dumps(
+                      result,
+                      ensure_ascii=False,
+                      indent=2
+                  ),
+
+                  encoding="utf-8"
+              )
+
+
+              print(
+                  "⚠️ No source text available."
+              )
+
+              print(
+                  "⏭️ Gemini processing skipped."
+              )
+
+
+              raise SystemExit(0)
+
+
+          # ==========================================
+          # PREPARE SOURCE TEXT
+          # ==========================================
+
+          source_text = json.dumps(
+              usable_items,
+              ensure_ascii=False,
+              indent=2
+          )
+
+
+          # ==========================================
+          # GEMINI PROMPT
+          # ==========================================
+
+          prompt = f"""
+          तुम Rajasthan competitive-exam current affairs
+          content processor हो।
+
+          केवल नीचे दिए गए SOURCE CONTENT से facts निकालो।
+
+          बहुत महत्वपूर्ण नियम:
+
+          1. कोई fact अपनी तरफ से मत बनाना।
+          2. यदि source में information नहीं है तो उसे छोड़ दो।
+          3. केवल Rajasthan-related current affairs लो।
+          4. National generic news मत लो।
+          5. Technology/Science & Technology से जुड़ी
+             exam-relevant information अलग category में
+             ली जा सकती है।
+          6. Names, dates, posts, places और numbers को
+             source के अनुसार ही रखो।
+          7. प्रत्येक item में source URL रखो।
+          8. Hindi में output दो।
+          9. प्रत्येक fact के आधार पर एक MCQ बनाओ।
+          10. MCQ का सही उत्तर source से ही होना चाहिए।
+
+          SOURCE CONTENT:
+
+          {source_text}
+          """
+
+
+          # ==========================================
+          # JSON SCHEMA
+          # ==========================================
+
+          schema = {
+
+              "type": "object",
+
+              "properties": {
+
+                  "items": {
+
+                      "type": "array",
+
+                      "items": {
+
+                          "type": "object",
+
+                          "properties": {
+
+                              "category": {
+                                  "type": "string"
+                              },
+
+                              "fact": {
+                                  "type": "string"
+                              },
+
+                              "question": {
+                                  "type": "string"
+                              },
+
+                              "option_a": {
+                                  "type": "string"
+                              },
+
+                              "option_b": {
+                                  "type": "string"
+                              },
+
+                              "option_c": {
+                                  "type": "string"
+                              },
+
+                              "option_d": {
+                                  "type": "string"
+                              },
+
+                              "answer": {
+                                  "type": "string"
+                              },
+
+                              "source_url": {
+                                  "type": "string"
+                              }
+
+                          },
+
+                          "required": [
+                              "category",
+                              "fact",
+                              "question",
+                              "option_a",
+                              "option_b",
+                              "option_c",
+                              "option_d",
+                              "answer",
+                              "source_url"
+                          ]
+
+                      }
+
+                  }
+
+              },
+
+              "required": [
+                  "items"
+              ]
+
+          }
+
+
+          # ==========================================
+          # GEMINI API
+          # ==========================================
+
+          api_key = os.environ[
+              "GEMINI_API_KEY"
+          ]
+
+
+          url = (
+              "https://generativelanguage.googleapis.com/"
+              "v1beta/models/gemini-3.8-flash:generateContent"
+          )
+
+
+          payload = {
+
+              "contents": [
+
+                  {
+
+                      "parts": [
+
+                          {
+                              "text": prompt
+                          }
+
+                      ]
+
+                  }
+
+              ],
+
+              "generationConfig": {
+
+                  "responseMimeType":
+                      "application/json",
+
+                  "responseSchema":
+                      schema
+
+              }
+
+          }
+
+
+          response = requests.post(
+
+              url,
+
+              headers={
+
+                  "x-goog-api-key":
+                      api_key,
+
+                  "Content-Type":
+                      "application/json"
+
+              },
+
+              json=payload,
+
+              timeout=120
+
+          )
+
+
+          response.raise_for_status()
+
+
+          api_data = response.json()
+
+
+          # ==========================================
+          # GET GEMINI TEXT
+          # ==========================================
+
+          candidates = api_data.get(
+              "candidates",
+              []
+          )
+
+
+          if not candidates:
+
+              raise SystemExit(
+                  "❌ Gemini ने कोई response नहीं दिया"
+              )
+
+
+          text = (
+
+              candidates[0]
+              .get("content", {})
+              .get("parts", [{}])[0]
+              .get("text", "")
+          )
+
+
+          if not text:
+
+              raise SystemExit(
+                  "❌ Gemini response खाली है"
+              )
+
+
+          generated = json.loads(
+              text
+          )
+
+
+          # ==========================================
+          # SAVE RESULT
+          # ==========================================
+
+          final_result = {
+
+              "status": "success",
+
+              "items":
+                  generated.get(
+                      "items",
+                      []
+                  )
+
+          }
+
+
+          OUTPUT_FILE.write_text(
+
+              json.dumps(
+                  final_result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+
+              encoding="utf-8"
+          )
+
+
+          print(
+              "========================================"
+          )
+
+          print(
+              "✅ GEMINI PROCESSING COMPLETE"
+          )
+
+          print(
+              "Generated items:",
+              len(
+                  final_result["items"]
+              )
+          )
+
+          print(
+              "Output:",
+              OUTPUT_FILE
+          )
+
+          print(
+              "========================================"
+          )
+
+
+          PY
+
+
+      # ==========================================
+      # 3. SAVE GEMINI RESULT
+      # ==========================================
+      - name: Save current affairs
+        run: |
+
+          git add current_affairs.json
+
+          if git diff --cached --quiet; then
+
+            echo "⏭️ No changes."
+
+          else
+
+            git config user.name \
+              "github-actions[bot]"
+
+            git config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git commit \
+              -m "Generate current affairs"
+
+            git push
+
+            echo "✅ Current affairs saved."
+
+          fi
