@@ -1,56 +1,94 @@
-name: YouTube Caption Test
+name: Meridian Auto Collector
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '30 * * * *'
+
+permissions:
+  contents: write
 
 jobs:
-  caption-test:
+  collect:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Check captions
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Collect latest Meridian videos
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
+          import json
           import requests
+          from pathlib import Path
 
-          video_id = "u8HlUeD7r0A"
-          key = os.environ["YOUTUBE_API_KEY"]
+          KEY = os.environ["YOUTUBE_API_KEY"]
 
-          url = "https://www.googleapis.com/youtube/v3/captions"
-
+          # Meridian Academy
           r = requests.get(
-              url,
+              "https://www.googleapis.com/youtube/v3/channels",
               params={
-                  "part": "snippet",
-                  "videoId": video_id,
-                  "key": key
+                  "part": "contentDetails",
+                  "forHandle": "meridian.academy",
+                  "key": KEY
               },
               timeout=20
           )
+          r.raise_for_status()
 
-          print("HTTP STATUS:", r.status_code)
+          channel = r.json()["items"][0]
+          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
 
-          if r.status_code != 200:
-              print(r.text)
-              raise SystemExit(1)
+          r = requests.get(
+              "https://www.googleapis.com/youtube/v3/playlistItems",
+              params={
+                  "part": "snippet,contentDetails",
+                  "playlistId": uploads,
+                  "maxResults": 10,
+                  "key": KEY
+              },
+              timeout=20
+          )
+          r.raise_for_status()
 
-          data = r.json()
-          items = data.get("items", [])
+          videos = []
 
-          print("CAPTION TRACKS:", len(items))
+          for item in r.json().get("items", []):
+              s = item["snippet"]
+              video_id = item["contentDetails"]["videoId"]
 
-          if not items:
-              print("NO CAPTIONS AVAILABLE")
-          else:
-              for item in items:
-                  s = item["snippet"]
-                  print("LANGUAGE:", s.get("language"))
-                  print("NAME:", s.get("name"))
-                  print("TYPE:", s.get("trackKind"))
-                  print("CAPTION ID:", item.get("id"))
+              videos.append({
+                  "video_id": video_id,
+                  "title": s.get("title", ""),
+                  "published": s.get("publishedAt", ""),
+                  "description": s.get("description", ""),
+                  "url": f"https://www.youtube.com/watch?v={video_id}"
+              })
+
+          Path("meridian_latest.json").write_text(
+              json.dumps(videos, ensure_ascii=False, indent=2),
+              encoding="utf-8"
+          )
+
+          print(f"Found {len(videos)} latest videos")
+
+          for v in videos:
+              print(v["published"], "|", v["title"])
+              print(v["url"])
 
           PY
+
+      - name: Save result
+        run: |
+          git config user.name "github-actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add meridian_latest.json
+
+          git diff --cached --quiet || git commit -m "Update Meridian videos"
+          git push
