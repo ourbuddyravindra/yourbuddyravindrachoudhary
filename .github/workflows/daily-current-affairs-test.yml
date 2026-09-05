@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   extract-facts:
@@ -12,23 +12,23 @@ jobs:
 
     steps:
 
-      # --------------------------------
-      # 1. Checkout repository
-      # --------------------------------
+      # ==========================================
+      # 1. Checkout
+      # ==========================================
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --------------------------------
-      # 2. Setup Python
-      # --------------------------------
+      # ==========================================
+      # 2. Python
+      # ==========================================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      # --------------------------------
-      # 3. Install system packages
-      # --------------------------------
+      # ==========================================
+      # 3. OCR software
+      # ==========================================
       - name: Install OCR tools
         run: |
           sudo apt-get update
@@ -38,31 +38,26 @@ jobs:
             tesseract-ocr-hin \
             tesseract-ocr-eng
 
-      # --------------------------------
-      # 4. Install Python packages
-      # --------------------------------
+      # ==========================================
+      # 4. Python packages
+      # ==========================================
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            google-genai \
-            requests \
-            pillow
+          pip install google-genai requests pillow
 
-      # --------------------------------
+      # ==========================================
       # 5. Download latest Sujas PDF
-      # --------------------------------
+      # ==========================================
       - name: Download latest Sujas
-        env:
-          DIPR_API: https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll
         run: |
-
           python - <<'PY'
           import requests
           import json
           import sys
+          import re
 
-          api = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+          API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -98,157 +93,198 @@ jobs:
               "Type": "10"
           }
 
-          r = requests.post(
-              api,
+          print("Calling DIPR API...")
+
+          response = requests.post(
+              API,
               json=payload,
               timeout=60
           )
 
-          r.raise_for_status()
+          response.raise_for_status()
 
-          data = r.json()
+          data = response.json()
 
           print("API response received")
 
-          # Save raw response for debugging
-          with open(
-              "dipr_response.json",
-              "w",
-              encoding="utf-8"
-          ) as f:
-              json.dump(
-                  data,
-                  f,
+          # ------------------------------------------
+          # Recursively find all dictionaries
+          # ------------------------------------------
+          def walk(obj):
+
+              if isinstance(obj, dict):
+                  yield obj
+
+                  for value in obj.values():
+                      yield from walk(value)
+
+              elif isinstance(obj, list):
+
+                  for value in obj:
+                      yield from walk(value)
+
+          # ------------------------------------------
+          # Find Sujas records
+          # ------------------------------------------
+          sujas_records = []
+
+          for item in walk(data):
+
+              if not isinstance(item, dict):
+                  continue
+
+              title = str(
+                  item.get("Title") or ""
+              ).strip()
+
+              attachments = item.get(
+                  "AttachmentList"
+              )
+
+              if not isinstance(
+                  attachments,
+                  list
+              ):
+                  continue
+
+              if "सुजस" not in title:
+                  continue
+
+              for attachment in attachments:
+
+                  if not isinstance(
+                      attachment,
+                      dict
+                  ):
+                      continue
+
+                  path = (
+                      attachment.get("Path")
+                      or attachment.get("path")
+                  )
+
+                  if not path:
+                      continue
+
+                  sujas_records.append({
+                      "id": item.get("Id"),
+                      "title": title,
+                      "date": item.get("Date"),
+                      "path": path,
+                      "attachment_name":
+                          attachment.get(
+                              "AttachmentsName"
+                          )
+                  })
+
+          print(
+              "Sujas records found:",
+              len(sujas_records)
+          )
+
+          if not sujas_records:
+              print(
+                  "ERROR: No Sujas PDF found"
+              )
+              sys.exit(1)
+
+          # ------------------------------------------
+          # Sort by date / ID
+          # ------------------------------------------
+          def sort_key(x):
+
+              return (
+                  str(x.get("date") or ""),
+                  int(x.get("id") or 0)
+              )
+
+          sujas_records.sort(
+              key=sort_key,
+              reverse=True
+          )
+
+          selected = sujas_records[0]
+
+          print()
+          print("==========================================")
+          print("SELECTED SUJAS")
+          print("==========================================")
+
+          print(
+              json.dumps(
+                  selected,
                   ensure_ascii=False,
                   indent=2
               )
-
-          # Find records recursively
-          def find_records(obj):
-
-              if isinstance(obj, list):
-                  for x in obj:
-                      if isinstance(x, dict):
-                          keys = {k.lower() for k in x.keys()}
-
-                          if (
-                              any("orderid" in k for k in keys)
-                              or any("attachment" in k for k in keys)
-                              or any("pdf" in k for k in keys)
-                          ):
-                              yield x
-
-                          yield from find_records(x)
-
-              elif isinstance(obj, dict):
-                  for value in obj.values():
-                      yield from find_records(value)
-
-          records = list(find_records(data))
-
-          print("Candidate records:", len(records))
-
-          def get_value(record, keywords):
-
-              for k, v in record.items():
-                  kl = k.lower()
-
-                  for keyword in keywords:
-                      if keyword in kl and v:
-                          return v
-
-              return None
-
-          selected = None
-
-          for record in records:
-
-              title = get_value(
-                  record,
-                  ["title", "subject", "name"]
-              )
-
-              pdf = get_value(
-                  record,
-                  ["pdf", "attachment", "fileurl", "url", "path"]
-              )
-
-              order_id = get_value(
-                  record,
-                  ["orderid", "order_id", "id"]
-              )
-
-              date = get_value(
-                  record,
-                  ["date", "orderdate", "entrydate"]
-              )
-
-              text = str(title or "")
-
-              if "सुजस" in text.lower():
-
-                  if pdf:
-                      selected = {
-                          "title": title,
-                          "pdf": pdf,
-                          "order_id": order_id,
-                          "date": date
-                      }
-                      break
-
-          if not selected:
-
-              print("Could not automatically identify Sujas PDF.")
-
-              # Print useful debugging information
-              for record in records[:10]:
-                  print(record)
-
-              sys.exit(1)
-
-          print("Selected:")
-          print(json.dumps(
-              selected,
-              ensure_ascii=False,
-              indent=2
-          ))
-
-          pdf_url = selected["pdf"]
-
-          if isinstance(pdf_url, dict):
-              pdf_url = (
-                  pdf_url.get("url")
-                  or pdf_url.get("fileUrl")
-                  or pdf_url.get("path")
-              )
-
-          if not str(pdf_url).startswith("http"):
-
-              if str(pdf_url).startswith("/"):
-                  pdf_url = (
-                      "https://jankalyanfile.rajasthan.gov.in"
-                      + str(pdf_url)
-                  )
-              else:
-                  pdf_url = (
-                      "https://jankalyanfile.rajasthan.gov.in/"
-                      + str(pdf_url)
-                  )
-
-          print("PDF URL:", pdf_url)
-
-          pdf = requests.get(
-              pdf_url,
-              timeout=120
           )
 
-          pdf.raise_for_status()
+          pdf_url = str(
+              selected["path"]
+          ).strip()
 
-          content = pdf.content
+          # ------------------------------------------
+          # Extract URL if API returns Markdown link
+          # ------------------------------------------
+          markdown_match = re.search(
+              r"\]\((https?://[^)]+)\)",
+              pdf_url
+          )
 
-          if not content.startswith(b"%PDF"):
+          if markdown_match:
+              pdf_url = markdown_match.group(1)
+
+          # Remove accidental spaces
+          pdf_url = pdf_url.strip()
+
+          if not pdf_url.startswith(
+              "http://"
+          ) and not pdf_url.startswith(
+              "https://"
+          ):
               print(
-                  "Downloaded file does not look like a PDF."
+                  "ERROR: Invalid PDF URL:"
+              )
+              print(pdf_url)
+              sys.exit(1)
+
+          print()
+          print("PDF URL:")
+          print(pdf_url)
+
+          # ------------------------------------------
+          # Download
+          # ------------------------------------------
+          print()
+          print("Downloading PDF...")
+
+          pdf_response = requests.get(
+              pdf_url,
+              timeout=180,
+              headers={
+                  "User-Agent":
+                      "Mozilla/5.0"
+              }
+          )
+
+          pdf_response.raise_for_status()
+
+          content = pdf_response.content
+
+          print(
+              "Downloaded:",
+              len(content),
+              "bytes"
+          )
+
+          # ------------------------------------------
+          # Validate PDF
+          # ------------------------------------------
+          if not content.startswith(
+              b"%PDF"
+          ):
+              print(
+                  "ERROR: Downloaded file "
+                  "is not a valid PDF"
               )
               sys.exit(1)
 
@@ -258,33 +294,29 @@ jobs:
           ) as f:
               f.write(content)
 
+          selected["pdf_url"] = pdf_url
+
           with open(
               "sujas_metadata.json",
               "w",
               encoding="utf-8"
           ) as f:
               json.dump(
-                  {
-                      "title": selected["title"],
-                      "pdf_url": pdf_url,
-                      "order_id": selected["order_id"],
-                      "date": selected["date"]
-                  },
+                  selected,
                   f,
                   ensure_ascii=False,
                   indent=2
               )
 
+          print()
           print(
-              "Downloaded PDF:",
-              len(content),
-              "bytes"
+              "SUCCESS: Sujas PDF downloaded"
           )
           PY
 
-      # --------------------------------
-      # 6. Convert PDF pages to images
-      # --------------------------------
+      # ==========================================
+      # 6. Convert PDF → images
+      # ==========================================
       - name: Convert PDF to images
         run: |
           mkdir -p pages
@@ -296,34 +328,37 @@ jobs:
             sujas_today.pdf \
             pages/page
 
+          echo "Generated pages:"
           ls -lh pages/
 
-      # --------------------------------
-      # 7. OCR every page
-      # --------------------------------
+      # ==========================================
+      # 7. OCR
+      # ==========================================
       - name: OCR pages
         run: |
-
           python - <<'PY'
           import json
           import subprocess
           from pathlib import Path
 
-          pages = sorted(
+          images = sorted(
               Path("pages").glob("page-*.jpg")
           )
 
-          output = []
+          if not images:
+              raise RuntimeError(
+                  "No page images generated"
+              )
 
-          for image in pages:
+          results = []
 
-              name = image.stem
+          for image in images:
 
               try:
                   page_number = int(
-                      name.split("-")[-1]
+                      image.stem.split("-")[-1]
                   )
-              except:
+              except Exception:
                   continue
 
               print(
@@ -348,15 +383,15 @@ jobs:
 
               text = result.stdout.strip()
 
+              results.append({
+                  "page": page_number,
+                  "text": text
+              })
+
               print(
                   f"Page {page_number}: "
                   f"{len(text)} characters"
               )
-
-              output.append({
-                  "page": page_number,
-                  "text": text
-              })
 
           with open(
               "ocr_pages.json",
@@ -364,24 +399,26 @@ jobs:
               encoding="utf-8"
           ) as f:
               json.dump(
-                  output,
+                  results,
                   f,
                   ensure_ascii=False,
                   indent=2
               )
 
+          print()
           print(
-              "Created ocr_pages.json"
+              "OCR complete."
           )
+
           print(
               "Pages:",
-              len(output)
+              len(results)
           )
           PY
 
-      # --------------------------------
-      # 8. Extract verified facts
-      # --------------------------------
+      # ==========================================
+      # 8. Extract facts using Gemini
+      # ==========================================
       - name: Extract verified facts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -389,16 +426,11 @@ jobs:
         run: |
           python extract_facts.py
 
-      # --------------------------------
-      # 9. Show result
-      # --------------------------------
-      - name: Show extracted facts
+      # ==========================================
+      # 9. Display result
+      # ==========================================
+      - name: Display verified facts
         run: |
-
-          echo "=============================="
-          echo "VERIFIED FACTS"
-          echo "=============================="
-
           python - <<'PY'
           import json
 
@@ -409,35 +441,57 @@ jobs:
           ) as f:
               data = json.load(f)
 
-          print(
-              "Total facts:",
-              data.get("facts_count")
+          facts = data.get(
+              "facts",
+              []
           )
 
           print()
+          print("=" * 70)
+          print(
+              "VERIFIED FACTS:",
+              len(facts)
+          )
+          print("=" * 70)
 
-          for i, fact in enumerate(
-              data.get("facts", []),
+          for i, item in enumerate(
+              facts,
               1
           ):
-              print(
-                  f"{i}. {fact['fact']}"
-              )
-              print(
-                  f"   Category: {fact['category']}"
-              )
-              print(
-                  f"   Page: {fact['page']}"
-              )
-              print(
-                  f"   Evidence: {fact['evidence']}"
-              )
+
               print()
+              print(
+                  f"{i}. {item.get('fact', '')}"
+              )
+
+              print(
+                  "   Category:",
+                  item.get(
+                      "category",
+                      ""
+                  )
+              )
+
+              print(
+                  "   Page:",
+                  item.get(
+                      "page",
+                      ""
+                  )
+              )
+
+              print(
+                  "   Evidence:",
+                  item.get(
+                      "evidence",
+                      ""
+                  )
+              )
           PY
 
-      # --------------------------------
-      # 10. Upload debugging artifacts
-      # --------------------------------
+      # ==========================================
+      # 10. Upload results
+      # ==========================================
       - name: Upload extraction results
         uses: actions/upload-artifact@v4
         with:
@@ -447,4 +501,3 @@ jobs:
             sujas_metadata.json
             ocr_pages.json
             verified_facts.json
-            dipr_response.json
