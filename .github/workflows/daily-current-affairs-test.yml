@@ -1,24 +1,133 @@
-name: Meridian Rajasthan Video Test
+name: Gemini Current Affairs Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  gemini-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
-      - name: Install tools
+      - name: Test Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          python -m pip install --upgrade pip
-          pip install yt-dlp
+          python - <<'PY'
+          import os
+          import requests
+          import json
 
-      - name: Get video information
-        run: |
-          yt-dlp \
-            --skip-download \
-            --write-description \
-            --print "%(title)s" \
-            --print "%(description)s" \
-            "https://www.youtube.com/watch?v=x8IoUpU6ifs"
+          api_key = os.environ["GEMINI_API_KEY"]
+
+          # अभी test के लिए sample source text
+          source_text = """
+          राजस्थान सरकार ने 2026 में विभिन्न क्षेत्रों में नई पहलें शुरू की हैं।
+          प्रतियोगी परीक्षाओं के लिए महत्वपूर्ण नियुक्तियां, योजनाएं,
+          पुरस्कार, खेल, अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य,
+          पर्यावरण और विज्ञान एवं प्रौद्योगिकी से जुड़े तथ्यों को
+          प्राथमिकता दी जानी है।
+          """
+
+          prompt = f"""
+          तुम Rajasthan Competitive Exams के Current Affairs Editor हो।
+
+          दिए गए SOURCE TEXT से केवल वही तथ्य निकालो जो वास्तव में
+          source में मौजूद हैं। कोई तथ्य अपनी तरफ से मत बनाओ।
+
+          Output में:
+          - तथ्य का शीर्षक
+          - category
+          - short explanation
+          - एक MCQ
+          - चार options
+          - सही answer
+
+          भाषा: स्पष्ट हिंदी।
+          परीक्षा स्तर: RPSC/RSSB.
+
+          SOURCE TEXT:
+          {source_text}
+          """
+
+          schema = {
+              "type": "object",
+              "properties": {
+                  "items": {
+                      "type": "array",
+                      "items": {
+                          "type": "object",
+                          "properties": {
+                              "title": {"type": "string"},
+                              "category": {"type": "string"},
+                              "explanation": {"type": "string"},
+                              "question": {"type": "string"},
+                              "options": {
+                                  "type": "array",
+                                  "items": {"type": "string"}
+                              },
+                              "answer": {"type": "string"}
+                          },
+                          "required": [
+                              "title",
+                              "category",
+                              "explanation",
+                              "question",
+                              "options",
+                              "answer"
+                          ]
+                      }
+                  }
+              },
+              "required": ["items"]
+          }
+
+          url = (
+              "https://generativelanguage.googleapis.com/v1beta/"
+              "models/gemini-3.5-flash:generateContent"
+          )
+
+          payload = {
+              "contents": [
+                  {
+                      "parts": [
+                          {"text": prompt}
+                      ]
+                  }
+              ],
+              "generationConfig": {
+                  "temperature": 0.2,
+                  "responseMimeType": "application/json",
+                  "responseJsonSchema": schema
+              }
+          }
+
+          r = requests.post(
+              url,
+              headers={
+                  "x-goog-api-key": api_key,
+                  "Content-Type": "application/json"
+              },
+              json=payload,
+              timeout=60
+          )
+
+          print("HTTP STATUS:", r.status_code)
+
+          if r.status_code != 200:
+              print(r.text)
+              raise SystemExit(1)
+
+          data = r.json()
+
+          text = data["candidates"][0]["content"]["parts"][0]["text"]
+
+          print("\n========== GEMINI JSON ==========\n")
+          print(text)
+          print("\n=================================\n")
+
+          # Validate JSON
+          result = json.loads(text)
+
+          print("TOTAL ITEMS:", len(result.get("items", [])))
+          PY
