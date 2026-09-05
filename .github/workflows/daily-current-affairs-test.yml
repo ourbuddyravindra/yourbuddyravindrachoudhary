@@ -1,53 +1,218 @@
-name: Gemini Current Affairs Test
+name: DIPR PDF AI Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  gemini-test:
+  dipr-ai:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
-      - name: Test Gemini
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pypdf
+
+      - name: Download latest Sujas PDF
+        run: |
+          python - <<'PY'
+          import requests
+          import json
+          from pathlib import Path
+
+          api = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+
+          payload = {
+              "AdmDepartmentCode": 0,
+              "AttachmentList": [],
+              "BeneficiaryCategory": 0,
+              "Date": "",
+              "DepartmentCode": 85,
+              "DeptSectionCode": 0,
+              "EntryFromDate": "",
+              "EntryToDate": "",
+              "FromDate": "",
+              "Id": 0,
+              "IndexModel": {
+                  "AdvanceSearchModel": {},
+                  "PageSize": 15,
+                  "IsPostBack": False,
+                  "OrderByAsc": 0,
+                  "Search": None,
+                  "OrderBy": None
+              },
+              "IndividualBeneficiaryScheme": "",
+              "IsImagesRequired": True,
+              "IsLatest": -1,
+              "IsNotJankalyan": -1,
+              "OrderNo": "",
+              "SchemeCode": 0,
+              "Search": "",
+              "SectorIds": 0,
+              "Status": 1,
+              "SubTypeCode": "2583",
+              "Title": "",
+              "ToDate": "",
+              "Type": "10"
+          }
+
+          r = requests.post(api, json=payload, timeout=30)
+          r.raise_for_status()
+
+          data = r.json()
+
+          # API response structure संभालने के लिए recursive search
+          def find_records(obj):
+              if isinstance(obj, list):
+                  return obj
+              if isinstance(obj, dict):
+                  for key in ["Data", "data", "Result", "result", "Items", "items"]:
+                      if key in obj and isinstance(obj[key], list):
+                          return obj[key]
+                  for value in obj.values():
+                      found = find_records(value)
+                      if found:
+                          return found
+              return []
+
+          records = find_records(data)
+
+          if not records:
+              raise SystemExit("DIPR records नहीं मिले")
+
+          print("TOTAL RECORDS:", len(records))
+
+          selected = None
+
+          for item in records:
+              text = json.dumps(item, ensure_ascii=False).lower()
+
+              if "सुजस" in text and "बुलेटिन" in text:
+                  selected = item
+                  break
+
+          if selected is None:
+              selected = records[0]
+
+          print("\nSELECTED RECORD:")
+          print(json.dumps(selected, ensure_ascii=False, indent=2))
+
+          # सभी string values में PDF URL खोजें
+          def find_pdf_urls(obj):
+              urls = []
+
+              if isinstance(obj, str):
+                  if ".pdf" in obj.lower():
+                      urls.append(obj)
+
+              elif isinstance(obj, dict):
+                  for v in obj.values():
+                      urls.extend(find_pdf_urls(v))
+
+              elif isinstance(obj, list):
+                  for v in obj:
+                      urls.extend(find_pdf_urls(v))
+
+              return urls
+
+          pdf_urls = find_pdf_urls(selected)
+
+          if not pdf_urls:
+              raise SystemExit("Selected record में PDF URL नहीं मिला")
+
+          pdf_url = pdf_urls[0]
+
+          print("\nPDF URL:", pdf_url)
+
+          pdf = requests.get(pdf_url, timeout=60)
+          pdf.raise_for_status()
+
+          Path("sujas_today.pdf").write_bytes(pdf.content)
+
+          print("PDF SIZE:", len(pdf.content), "bytes")
+          PY
+
+      - name: Extract PDF text
+        run: |
+          python - <<'PY'
+          from pypdf import PdfReader
+          from pathlib import Path
+
+          reader = PdfReader("sujas_today.pdf")
+
+          print("PAGES:", len(reader.pages))
+
+          text = ""
+
+          for page_no, page in enumerate(reader.pages, 1):
+              page_text = page.extract_text() or ""
+              text += f"\n\n--- PAGE {page_no} ---\n{page_text}"
+
+          Path("sujas_text.txt").write_text(text, encoding="utf-8")
+
+          print("TEXT CHARACTERS:", len(text))
+
+          print("\n========== TEXT PREVIEW ==========\n")
+          print(text[:12000])
+          print("\n===================================\n")
+          PY
+
+      - name: Gemini processing
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import os
-          import requests
           import json
+          import requests
+          from pathlib import Path
 
-          api_key = os.environ["GEMINI_API_KEY"]
+          text = Path("sujas_text.txt").read_text(encoding="utf-8")
 
-          # अभी test के लिए sample source text
-          source_text = """
-          राजस्थान सरकार ने 2026 में विभिन्न क्षेत्रों में नई पहलें शुरू की हैं।
-          प्रतियोगी परीक्षाओं के लिए महत्वपूर्ण नियुक्तियां, योजनाएं,
-          पुरस्कार, खेल, अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य,
-          पर्यावरण और विज्ञान एवं प्रौद्योगिकी से जुड़े तथ्यों को
-          प्राथमिकता दी जानी है।
-          """
+          # बहुत बड़ा PDF होने पर अभी पहला 60k chars test करेंगे
+          text = text[:60000]
 
           prompt = f"""
-          तुम Rajasthan Competitive Exams के Current Affairs Editor हो।
+          तुम RPSC/RSSB के लिए Current Affairs Editor हो।
 
-          दिए गए SOURCE TEXT से केवल वही तथ्य निकालो जो वास्तव में
-          source में मौजूद हैं। कोई तथ्य अपनी तरफ से मत बनाओ।
+          नीचे राजस्थान सरकार के DIPR द्वारा जारी SUJAS e-Bulletin का text है।
 
-          Output में:
-          - तथ्य का शीर्षक
-          - category
-          - short explanation
-          - एक MCQ
-          - चार options
-          - सही answer
+          केवल source में मौजूद वास्तविक facts का उपयोग करो।
+          कोई fact, नाम, तारीख, संख्या या पद अपनी तरफ से मत बनाओ।
 
-          भाषा: स्पष्ट हिंदी।
-          परीक्षा स्तर: RPSC/RSSB.
+          Source के महत्वपूर्ण exam-oriented current affairs निकालो।
 
-          SOURCE TEXT:
-          {source_text}
+          Categories:
+          - राजस्थान नियुक्तियां
+          - योजनाएं/कार्यक्रम
+          - नीतियां
+          - पुरस्कार
+          - खेल
+          - व्यक्ति/स्थान/घटनाएं
+          - बजट/अर्थव्यवस्था
+          - कृषि
+          - शिक्षा
+          - स्वास्थ्य
+          - पर्यावरण
+          - उद्योग/निवेश
+          - आधारभूत संरचना/विकास
+          - रिपोर्ट/सूचकांक
+          - विज्ञान एवं प्रौद्योगिकी
+          - AI/डिजिटल
+
+          प्रत्येक item में:
+          title
+          category
+          fact
+          question
+          4 options
+          correct answer
+
+          Output केवल valid JSON में दो।
+
+          SOURCE:
+          {text}
           """
 
           schema = {
@@ -60,7 +225,7 @@ jobs:
                           "properties": {
                               "title": {"type": "string"},
                               "category": {"type": "string"},
-                              "explanation": {"type": "string"},
+                              "fact": {"type": "string"},
                               "question": {"type": "string"},
                               "options": {
                                   "type": "array",
@@ -71,7 +236,7 @@ jobs:
                           "required": [
                               "title",
                               "category",
-                              "explanation",
+                              "fact",
                               "question",
                               "options",
                               "answer"
@@ -87,47 +252,44 @@ jobs:
               "models/gemini-3.5-flash:generateContent"
           )
 
-          payload = {
-              "contents": [
-                  {
-                      "parts": [
-                          {"text": prompt}
-                      ]
-                  }
-              ],
-              "generationConfig": {
-                  "temperature": 0.2,
-                  "responseMimeType": "application/json",
-                  "responseJsonSchema": schema
-              }
-          }
-
-          r = requests.post(
+          response = requests.post(
               url,
               headers={
-                  "x-goog-api-key": api_key,
+                  "x-goog-api-key": os.environ["GEMINI_API_KEY"],
                   "Content-Type": "application/json"
               },
-              json=payload,
-              timeout=60
+              json={
+                  "contents": [
+                      {
+                          "parts": [
+                              {"text": prompt}
+                          ]
+                      }
+                  ],
+                  "generationConfig": {
+                      "temperature": 0.1,
+                      "responseMimeType": "application/json",
+                      "responseJsonSchema": schema
+                  }
+              },
+              timeout=120
           )
 
-          print("HTTP STATUS:", r.status_code)
+          print("GEMINI STATUS:", response.status_code)
 
-          if r.status_code != 200:
-              print(r.text)
+          if response.status_code != 200:
+              print(response.text)
               raise SystemExit(1)
 
-          data = r.json()
+          result = response.json()
 
-          text = data["candidates"][0]["content"]["parts"][0]["text"]
+          output = result["candidates"][0]["content"]["parts"][0]["text"]
 
-          print("\n========== GEMINI JSON ==========\n")
-          print(text)
-          print("\n=================================\n")
+          print("\n========== GEMINI RESULT ==========\n")
+          print(output)
+          print("\n===================================\n")
 
-          # Validate JSON
-          result = json.loads(text)
+          parsed = json.loads(output)
 
-          print("TOTAL ITEMS:", len(result.get("items", [])))
+          print("TOTAL CURRENT AFFAIRS:", len(parsed["items"]))
           PY
