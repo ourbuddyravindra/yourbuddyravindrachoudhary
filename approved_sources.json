@@ -1,74 +1,85 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-05T18:25:57.514746+00:00"
+    "generated_at": "2026-09-05T18:52:02.468491+00:00"
   },
   "sources": [
     {
       "type": "instagram",
       "url": "https://www.instagram.com/shiv_kumar8094/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/neerajsircurrentaffairs/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/success_academy_hmh/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/exams_shorts/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/testboard_rajasthan/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/smartstudyplus2/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/rpscranker/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/rajasthan_currentaffair/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/noteshubgk/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/diprrajasthan/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/kumargaurav5555/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "youtube",
