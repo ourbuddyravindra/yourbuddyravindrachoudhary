@@ -1,10 +1,10 @@
-name: Official Sources Test
+name: Rajasthan Sources Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  source-test:
+  collect:
     runs-on: ubuntu-latest
 
     steps:
@@ -12,16 +12,21 @@ jobs:
         run: |
           pip install requests beautifulsoup4
 
-      - name: Extract Official News
+      - name: Collect Rajasthan Sources
         run: |
           python - <<'PY'
           import requests
+          import re
           from bs4 import BeautifulSoup
           from datetime import datetime
           from zoneinfo import ZoneInfo
-          import re
+          from urllib.parse import urljoin
 
-          today = datetime.now(
+          # =========================================================
+          # SETTINGS
+          # =========================================================
+
+          TODAY = datetime.now(
               ZoneInfo("Asia/Kolkata")
           ).date()
 
@@ -29,145 +34,60 @@ jobs:
               "User-Agent": (
                   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                   "AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) "
                   "Chrome/140.0 Safari/537.36"
               )
           }
 
           print("=" * 70)
-          print("OFFICIAL CURRENT AFFAIRS SOURCE EXTRACTION")
-          print("Today:", today)
+          print("RAJASTHAN CURRENT AFFAIRS COLLECTOR")
+          print("Today:", TODAY)
           print("=" * 70)
 
           # =========================================================
-          # 1. RAJASTHAN DST
+          # HELPER
           # =========================================================
 
-          print("\n🏜️ RAJASTHAN SCIENCE & TECHNOLOGY — DST")
+          def clean(text):
+              return re.sub(
+                  r"\s+",
+                  " ",
+                  text or ""
+              ).strip()
+
+          def recent(date_value, days=7):
+              if not date_value:
+                  return False
+
+              age = (
+                  TODAY - date_value
+              ).days
+
+              return 0 <= age <= days
+
+          # =========================================================
+          # 1. FINANCE RAJASTHAN
+          # =========================================================
+
+          print("\n")
+          print("💰 FINANCE DEPARTMENT")
           print("-" * 70)
 
-          dst_url = "https://dst.rajasthan.gov.in/news.aspx"
-
-          try:
-              r = requests.get(
-                  dst_url,
-                  headers=headers,
-                  timeout=30
-              )
-
-              print("DST Status:", r.status_code)
-
-              soup = BeautifulSoup(
-                  r.text,
-                  "html.parser"
-              )
-
-              dst_count = 0
-
-              for row in soup.find_all("tr"):
-
-                  cells = row.find_all(
-                      ["td", "th"]
-                  )
-
-                  if len(cells) < 3:
-                      continue
-
-                  values = [
-                      c.get_text(
-                          " ",
-                          strip=True
-                      )
-                      for c in cells
-                  ]
-
-                  text = " | ".join(values)
-
-                  match = re.search(
-                      r"\b(\d{2}/\d{2}/\d{4})\b",
-                      text
-                  )
-
-                  if not match:
-                      continue
-
-                  date_text = match.group(1)
-
-                  try:
-                      item_date = datetime.strptime(
-                          date_text,
-                          "%d/%m/%Y"
-                      ).date()
-                  except:
-                      continue
-
-                  days_old = (
-                      today - item_date
-                  ).days
-
-                  if days_old < 0 or days_old > 7:
-                      continue
-
-                  # Table format:
-                  # S.No | Title | Date | Download
-                  title = values[1]
-
-                  if len(title) < 15:
-                      continue
-
-                  # Ignore administrative/tender notices
-                  ignore_words = [
-                      "tender",
-                      "corrigendum",
-                      "auction",
-                      "निविदा",
-                      "नीलामी"
-                  ]
-
-                  if any(
-                      word.lower() in title.lower()
-                      for word in ignore_words
-                  ):
-                      continue
-
-                  print("\n📌 Title:", title)
-                  print("📅 Date:", date_text)
-                  print("🔗 Source:", dst_url)
-
-                  dst_count += 1
-
-              print(
-                  "\nDST useful entries:",
-                  dst_count
-              )
-
-          except Exception as e:
-              print(
-                  "DST ERROR:",
-                  str(e)
-              )
-
-          # =========================================================
-          # 2. PIB SCIENCE & TECHNOLOGY
-          # =========================================================
-
-          print("\n💻 PIB — SCIENCE & TECHNOLOGY")
-          print("-" * 70)
-
-          pib_url = (
-              "https://www.pib.gov.in/"
-              "Newsite/pmreleases.aspx?"
-              "lang=1&mincode=3&reg=48"
+          finance_url = (
+              "https://www.finance.rajasthan.gov.in/"
+              "website/Default.aspx"
           )
 
           try:
+
               r = requests.get(
-                  pib_url,
+                  finance_url,
                   headers=headers,
                   timeout=30
               )
 
               print(
-                  "PIB Status:",
+                  "Finance Status:",
                   r.status_code
               )
 
@@ -176,193 +96,569 @@ jobs:
                   "html.parser"
               )
 
-              keywords = [
-                  "ISRO",
-                  "space",
-                  "satellite",
-                  "rocket",
-                  "GSLV",
-                  "PSLV",
-                  "EOS",
-                  "artificial intelligence",
-                  "technology",
-                  "science",
-                  "quantum",
-                  "semiconductor",
-                  "cyber",
-                  "digital",
-                  "biotechnology",
-                  "research",
-                  "innovation",
-                  "robotics",
-                  "astronomy",
-                  "nuclear"
-              ]
+              count = 0
 
-              seen = set()
-              pib_count = 0
-
-              # PIB listing has actual release links
+              # Search visible links
               for a in soup.find_all("a"):
 
-                  title = a.get_text(
-                      " ",
-                      strip=True
-                  )
-
-                  if not title:
-                      continue
-
-                  if len(title) < 25:
-                      continue
-
-                  title_lower = title.lower()
-
-                  # Technology/science relevance
-                  if not any(
-                      keyword.lower()
-                      in title_lower
-                      for keyword in keywords
-                  ):
-                      continue
-
-                  # Extract date from the same listing block
-                  parent = a.parent
-
-                  block_text = ""
-
-                  if parent:
-                      block_text = parent.get_text(
+                  title = clean(
+                      a.get_text(
                           " ",
                           strip=True
                       )
+                  )
 
-                  if parent and parent.parent:
-                      block_text += " " + (
-                          parent.parent.get_text(
+                  if len(title) < 15:
+                      continue
+
+                  # Date from text around link
+                  parent_text = ""
+
+                  if a.parent:
+                      parent_text = clean(
+                          a.parent.get_text(
+                              " ",
+                              strip=True
+                          )
+                      )
+
+                  if a.parent and a.parent.parent:
+                      parent_text += " " + clean(
+                          a.parent.parent.get_text(
                               " ",
                               strip=True
                           )
                       )
 
                   date_match = re.search(
-                      r"\((\d{1,2})-"
-                      r"([A-Za-z]+)-"
-                      r"(\d{4})\)",
-                      block_text
+                      r"(\d{1,2})\s*[-/]\s*"
+                      r"(\d{1,2})\s*[-/]\s*"
+                      r"(20\d{2})",
+                      parent_text
                   )
 
                   item_date = None
 
                   if date_match:
 
-                      day = int(
-                          date_match.group(1)
-                      )
-
-                      month_name = (
-                          date_match.group(2)
-                      )
-
-                      year = int(
-                          date_match.group(3)
-                      )
-
                       try:
-                          item_date = datetime.strptime(
-                              f"{day}-{month_name}-{year}",
-                              "%d-%B-%Y"
+                          item_date = datetime(
+                              int(date_match.group(3)),
+                              int(date_match.group(2)),
+                              int(date_match.group(1))
                           ).date()
-
                       except:
-                          # Try abbreviated month
+                          pass
+
+                  # Also support "3 Sep"
+                  if not item_date:
+
+                      date_match = re.search(
+                          r"\b(\d{1,2})\s+"
+                          r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|"
+                          r"Sep|Oct|Nov|Dec)\b",
+                          parent_text,
+                          re.IGNORECASE
+                      )
+
+                      if date_match:
+
                           try:
                               item_date = datetime.strptime(
-                                  f"{day}-{month_name}-{year}",
-                                  "%d-%b-%Y"
+                                  date_match.group(1)
+                                  + " "
+                                  + date_match.group(2)
+                                  + " "
+                                  + str(TODAY.year),
+                                  "%d %b %Y"
                               ).date()
-
                           except:
-                              item_date = None
+                              pass
 
-                  # Only recent releases
+                  if not recent(
+                      item_date,
+                      7
+                  ):
+                      continue
+
+                  href = a.get(
+                      "href",
+                      ""
+                  )
+
+                  link = urljoin(
+                      finance_url,
+                      href
+                  )
+
+                  print("\n📌", title)
+
                   if item_date:
+                      print(
+                          "📅",
+                          item_date.strftime(
+                              "%d-%m-%Y"
+                          )
+                      )
 
-                      days_old = (
-                          today - item_date
-                      ).days
+                  print("🔗", link)
 
-                      if (
-                          days_old < 0
-                          or days_old > 3
-                      ):
-                          continue
+                  count += 1
 
-                  # Duplicate protection
-                  key = title.lower()
+                  if count >= 15:
+                      break
+
+              print(
+                  "\nFinance entries:",
+                  count
+              )
+
+          except Exception as e:
+
+              print(
+                  "Finance ERROR:",
+                  str(e)
+              )
+
+          # =========================================================
+          # 2. RAJASTHAN RECRUITMENT PORTAL
+          # =========================================================
+
+          print("\n")
+          print("👥 RECRUITMENT PORTAL")
+          print("-" * 70)
+
+          recruitment_url = (
+              "https://www.recruitment.rajasthan.gov.in/"
+          )
+
+          try:
+
+              r = requests.get(
+                  recruitment_url,
+                  headers=headers,
+                  timeout=30
+              )
+
+              print(
+                  "Recruitment Status:",
+                  r.status_code
+              )
+
+              soup = BeautifulSoup(
+                  r.text,
+                  "html.parser"
+              )
+
+              count = 0
+              seen = set()
+
+              for text_node in soup.stripped_strings:
+
+                  text = clean(text_node)
+
+                  if len(text) < 15:
+                      continue
+
+                  keywords = [
+                      "RECRUITMENT",
+                      "JOINT",
+                      "VACANCY",
+                      "DIRECT",
+                      "RECRUIT",
+                      "RSSB",
+                      "RPSC"
+                  ]
+
+                  if not any(
+                      k.lower() in text.lower()
+                      for k in keywords
+                  ):
+                      continue
+
+                  key = text.lower()
 
                   if key in seen:
                       continue
 
                   seen.add(key)
 
-                  # Link
-                  href = a.get(
-                      "href",
-                      ""
+                  print(
+                      "\n📌",
+                      text
                   )
-
-                  if href.startswith("http"):
-                      link = href
-
-                  elif href.startswith("/"):
-                      link = (
-                          "https://www.pib.gov.in"
-                          + href
-                      )
-
-                  else:
-                      link = (
-                          "https://www.pib.gov.in/"
-                          + href.lstrip("./")
-                      )
 
                   print(
-                      "\n📌 Title:",
-                      title
+                      "🔗",
+                      recruitment_url
                   )
 
-                  if item_date:
-                      print(
-                          "📅 Date:",
-                          item_date.strftime(
-                              "%d-%m-%Y"
-                          )
-                      )
-                  else:
-                      print(
-                          "📅 Date:",
-                          "Not detected"
-                      )
+                  count += 1
 
-                  print(
-                      "🔗 Link:",
-                      link
-                  )
-
-                  pib_count += 1
-
-                  if pib_count >= 15:
+                  if count >= 15:
                       break
 
               print(
-                  "\nPIB useful entries:",
-                  pib_count
+                  "\nRecruitment entries:",
+                  count
               )
 
           except Exception as e:
+
               print(
-                  "PIB ERROR:",
+                  "Recruitment ERROR:",
+                  str(e)
+              )
+
+          # =========================================================
+          # 3. RAJASTHAN DST
+          # =========================================================
+
+          print("\n")
+          print("🔬 SCIENCE & TECHNOLOGY — DST")
+          print("-" * 70)
+
+          dst_url = (
+              "https://dst.rajasthan.gov.in/news.aspx"
+          )
+
+          try:
+
+              r = requests.get(
+                  dst_url,
+                  headers=headers,
+                  timeout=30
+              )
+
+              print(
+                  "DST Status:",
+                  r.status_code
+              )
+
+              soup = BeautifulSoup(
+                  r.text,
+                  "html.parser"
+              )
+
+              count = 0
+
+              for row in soup.find_all("tr"):
+
+                  cells = row.find_all("td")
+
+                  if len(cells) < 3:
+                      continue
+
+                  values = [
+                      clean(
+                          c.get_text(
+                              " ",
+                              strip=True
+                          )
+                      )
+                      for c in cells
+                  ]
+
+                  date_match = re.search(
+                      r"\b(\d{2}/\d{2}/\d{4})\b",
+                      " ".join(values)
+                  )
+
+                  if not date_match:
+                      continue
+
+                  try:
+
+                      item_date = datetime.strptime(
+                          date_match.group(1),
+                          "%d/%m/%Y"
+                      ).date()
+
+                  except:
+                      continue
+
+                  if not recent(
+                      item_date,
+                      7
+                  ):
+                      continue
+
+                  title = values[1]
+
+                  if len(title) < 15:
+                      continue
+
+                  # Administrative noise
+                  ignore = [
+                      "tender",
+                      "corrigendum",
+                      "auction",
+                      "नीलामी",
+                      "निविदा"
+                  ]
+
+                  if any(
+                      x in title.lower()
+                      for x in ignore
+                  ):
+                      continue
+
+                  link = dst_url
+
+                  a = row.find("a")
+
+                  if a and a.get("href"):
+
+                      link = urljoin(
+                          dst_url,
+                          a["href"]
+                      )
+
+                  print(
+                      "\n📌",
+                      title
+                  )
+
+                  print(
+                      "📅",
+                      item_date.strftime(
+                          "%d-%m-%Y"
+                      )
+                  )
+
+                  print(
+                      "🔗",
+                      link
+                  )
+
+                  count += 1
+
+              print(
+                  "\nDST entries:",
+                  count
+              )
+
+          except Exception as e:
+
+              print(
+                  "DST ERROR:",
+                  str(e)
+              )
+
+          # =========================================================
+          # 4. DIPR API
+          # =========================================================
+
+          print("\n")
+          print("📰 DIPR — RAJASTHAN GOVERNMENT")
+          print("-" * 70)
+
+          dipr_url = (
+              "https://dipr.rajasthan.gov.in/"
+              "webapi/api/OrderPortal/GetAll"
+          )
+
+          payload = {
+              "AdmDepartmentCode": 0,
+              "AttachmentList": [],
+              "BeneficiaryCategory": 0,
+              "Date": "",
+              "DepartmentCode": 85,
+              "DeptSectionCode": 0,
+              "EntryFromDate": "",
+              "EntryToDate": "",
+              "FromDate": "",
+              "Id": 0,
+              "IndexModel": {
+                  "AdvanceSearchModel": {},
+                  "PageSize": 50,
+                  "IsPostBack": False,
+                  "OrderByAsc": 0,
+                  "Search": None,
+                  "OrderBy": None
+              },
+              "IndividualBeneficiaryScheme": "",
+              "IsImagesRequired": True,
+              "IsLatest": -1,
+              "IsNotJankalyan": -1,
+              "OrderNo": "",
+              "SchemeCode": 0,
+              "Search": "",
+              "SectorIds": 0,
+              "Status": 1,
+              "SubTypeCode": "2583",
+              "Title": "",
+              "ToDate": "",
+              "Type": "10"
+          }
+
+          try:
+
+              r = requests.post(
+                  dipr_url,
+                  json=payload,
+                  headers=headers,
+                  timeout=30
+              )
+
+              print(
+                  "DIPR Status:",
+                  r.status_code
+              )
+
+              data = r.json()
+
+              # =====================================================
+              # Recursive finder
+              # =====================================================
+
+              records = []
+
+              def find_records(obj):
+
+                  if isinstance(obj, list):
+
+                      for item in obj:
+
+                          if isinstance(
+                              item,
+                              dict
+                          ):
+
+                              keys = {
+                                  str(k).lower()
+                                  for k in item.keys()
+                              }
+
+                              has_title = any(
+                                  x in keys
+                                  for x in [
+                                      "title",
+                                      "ordertitle",
+                                      "name"
+                                  ]
+                              )
+
+                              has_id = any(
+                                  x in keys
+                                  for x in [
+                                      "id",
+                                      "orderid"
+                                  ]
+                              )
+
+                              if (
+                                  has_title
+                                  and has_id
+                              ):
+                                  records.append(item)
+
+                          find_records(item)
+
+                  elif isinstance(obj, dict):
+
+                      for value in obj.values():
+                          find_records(value)
+
+              find_records(data)
+
+              # Remove duplicate dictionaries
+              unique = []
+              seen = set()
+
+              for item in records:
+
+                  key = str(
+                      sorted(
+                          item.items()
+                      )
+                  )
+
+                  if key not in seen:
+
+                      seen.add(key)
+                      unique.append(item)
+
+              print(
+                  "DIPR records found:",
+                  len(unique)
+              )
+
+              count = 0
+
+              for item in unique[:30]:
+
+                  title = ""
+
+                  for key in [
+                      "Title",
+                      "OrderTitle",
+                      "title",
+                      "ordertitle",
+                      "Name",
+                      "name"
+                  ]:
+
+                      if key in item:
+
+                          title = clean(
+                              str(
+                                  item[key]
+                              )
+                          )
+
+                          if title:
+                              break
+
+                  if not title:
+                      continue
+
+                  print(
+                      "\n📌",
+                      title
+                  )
+
+                  print(
+                      "📦 ID:",
+                      item.get(
+                          "Id",
+                          item.get(
+                              "ID",
+                              item.get(
+                                  "OrderId",
+                                  ""
+                              )
+                          )
+                      )
+                  )
+
+                  # Print available date
+                  for key in item.keys():
+
+                      if (
+                          "date"
+                          in str(key).lower()
+                      ):
+
+                          value = item[key]
+
+                          if value:
+                              print(
+                                  "📅",
+                                  key,
+                                  ":",
+                                  value
+                              )
+
+                  count += 1
+
+                  if count >= 15:
+                      break
+
+          except Exception as e:
+
+              print(
+                  "DIPR ERROR:",
                   str(e)
               )
 
@@ -370,8 +666,9 @@ jobs:
           # FINISHED
           # =========================================================
 
-          print("\n" + "=" * 70)
-          print("EXTRACTION TEST FINISHED")
+          print("\n")
+          print("=" * 70)
+          print("RAJASTHAN SOURCE COLLECTION FINISHED")
           print("=" * 70)
 
           PY
