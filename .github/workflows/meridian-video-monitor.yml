@@ -22,7 +22,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Check latest Rajasthan Current Affairs video
+      - name: Detect new Rajasthan video
+        id: detect
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
@@ -34,8 +35,7 @@ jobs:
           KEY = os.environ["YOUTUBE_API_KEY"]
           STATE_FILE = Path("meridian_latest_video.txt")
 
-          # 1. Get Meridian Academy channel
-          response = requests.get(
+          r = requests.get(
               "https://www.googleapis.com/youtube/v3/channels",
               params={
                   "part": "contentDetails",
@@ -44,45 +44,40 @@ jobs:
               },
               timeout=20
           )
-          response.raise_for_status()
+          r.raise_for_status()
 
-          data = response.json()
+          data = r.json()
 
           if not data.get("items"):
               raise SystemExit("❌ Meridian Academy channel नहीं मिला")
 
-          uploads_playlist = data["items"][0]["contentDetails"][
+          uploads = data["items"][0]["contentDetails"][
               "relatedPlaylists"
           ]["uploads"]
 
-          # 2. Get latest uploads
-          response = requests.get(
+          r = requests.get(
               "https://www.googleapis.com/youtube/v3/playlistItems",
               params={
                   "part": "snippet,contentDetails",
-                  "playlistId": uploads_playlist,
+                  "playlistId": uploads,
                   "maxResults": 10,
                   "key": KEY
               },
               timeout=20
           )
-          response.raise_for_status()
+          r.raise_for_status()
 
-          items = response.json().get("items", [])
+          items = r.json().get("items", [])
 
-          # 3. Find latest Rajasthan Current Affairs / SUJAS video
           selected = None
 
           for item in items:
               title = item["snippet"]["title"]
-              title_lower = title.lower()
+              t = title.lower()
 
               if (
-                  "rajasthan current affairs" in title_lower
-                  or (
-                      "rajasthan" in title_lower
-                      and "sujas" in title_lower
-                  )
+                  "rajasthan current affairs" in t
+                  or ("rajasthan" in t and "sujas" in t)
               ):
                   selected = item
                   break
@@ -99,7 +94,6 @@ jobs:
               selected["snippet"]["publishedAt"]
           )
 
-          # 4. Read saved video ID
           old_id = ""
 
           if STATE_FILE.exists():
@@ -107,40 +101,37 @@ jobs:
                   encoding="utf-8"
               ).strip()
 
-          print("========================================")
-          print("MERIDIAN RAJASTHAN VIDEO MONITOR")
-          print("========================================")
-          print("OLD VIDEO ID:", old_id or "NONE")
-          print("NEW VIDEO ID:", video_id)
+          print("OLD VIDEO:", old_id or "NONE")
+          print("NEW VIDEO:", video_id)
           print("TITLE:", title)
           print("PUBLISHED:", published)
-          print("========================================")
 
-          # 5. Duplicate protection
           if old_id == video_id:
-              print()
-              print("⏭️ SAME VIDEO — NOTHING TO DO")
-
+              print("⏭️ SAME VIDEO")
+              print("NEW_VIDEO=false")
           else:
-              print()
-              print("🆕 NEW RAJASTHAN VIDEO FOUND")
-              print("Saving new video ID...")
+              print("🆕 NEW VIDEO")
+              print("NEW_VIDEO=true")
 
               STATE_FILE.write_text(
                   video_id,
                   encoding="utf-8"
               )
 
-              print("✅ New video state saved")
+              # GitHub Actions outputs
+              with open(
+                  os.environ["GITHUB_OUTPUT"],
+                  "a",
+                  encoding="utf-8"
+              ) as f:
+                  f.write("new_video=true\n")
+                  f.write(f"video_id={video_id}\n")
+                  f.write(f"title<<EOF\n{title}\nEOF\n")
+                  f.write(f"published={published}\n")
 
-          print()
-          print("VIDEO URL:")
-          print(f"https://www.youtube.com/watch?v={video_id}")
-          print("========================================")
           PY
 
-      # 6. Commit state only if changed
-      - name: Save video state
+      - name: Save new video state
         run: |
           git add meridian_latest_video.txt
 
@@ -153,5 +144,5 @@ jobs:
             git commit -m "Update Meridian Rajasthan video"
             git push
 
-            echo "✅ New video state committed."
+            echo "✅ State committed."
           fi
