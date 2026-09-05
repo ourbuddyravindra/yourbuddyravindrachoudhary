@@ -19,7 +19,6 @@ jobs:
           python - <<'PY'
           from google import genai
           import os
-          import time
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
@@ -94,42 +93,15 @@ jobs:
           केवल verified और genuinely important information दो।
           """
 
-          models = [
-    "gemini-3.5-flash"
-]
+          response = client.models.generate_content(
+              model="gemini-3.5-flash",
+              contents=prompt
+          )
 
-          last_error = None
-
-          for model in models:
-              for attempt in range(3):
-                  try:
-                      print(
-                          f"Trying {model}, attempt {attempt + 1}"
-                      )
-
-                      response = client.models.generate_content(
-                          model=model,
-                          contents=prompt
-                      )
-
-                      print("\n==============================")
-                      print(f"📅 {today}")
-                      print("==============================\n")
-                      print(response.text)
-
-                      raise SystemExit(0)
-
-                  except Exception as e:
-                      last_error = e
-                      print(
-                          f"Temporary error: {type(e).__name__}: {e}"
-                      )
-
-                      if attempt < 2:
-                          time.sleep(10 * (attempt + 1))
-
-              print(f"Switching from {model}...")
-
-          print("All Gemini attempts failed.")
-          raise last_error
+          print("")
+          print("==============================")
+          print(f"📅 करेंट अफेयर्स — {today}")
+          print("==============================")
+          print("")
+          print(response.text)
           PY
