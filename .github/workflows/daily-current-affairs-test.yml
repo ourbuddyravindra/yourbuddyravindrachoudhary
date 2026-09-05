@@ -1,158 +1,80 @@
-name: Meridian Rajasthan Video Detector
+name: Meridian Rajasthan Content Test
 
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
-  detect-rajasthan:
+  content-test:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Detect latest Rajasthan Current Affairs video
+      - name: Get Rajasthan video metadata
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import requests
-          from pathlib import Path
 
           KEY = os.environ["YOUTUBE_API_KEY"]
-          STATE_FILE = Path("meridian_latest_video.txt")
 
-          # ----------------------------------------
-          # 1. Meridian Academy channel
-          # ----------------------------------------
+          # Latest confirmed Rajasthan video
+          video_id = "x8IoUpU6ifs"
+
           response = requests.get(
-              "https://www.googleapis.com/youtube/v3/channels",
+              "https://www.googleapis.com/youtube/v3/videos",
               params={
-                  "part": "contentDetails",
-                  "forHandle": "meridian.academy",
+                  "part": "snippet,contentDetails",
+                  "id": video_id,
                   "key": KEY
               },
               timeout=20
           )
+
           response.raise_for_status()
 
           data = response.json()
 
           if not data.get("items"):
-              raise SystemExit("❌ Meridian Academy channel नहीं मिला")
+              raise SystemExit("❌ Video नहीं मिला")
 
-          channel = data["items"][0]
-          uploads_playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+          video = data["items"][0]
 
-          # ----------------------------------------
-          # 2. Latest uploads
-          # ----------------------------------------
-          response = requests.get(
-              "https://www.googleapis.com/youtube/v3/playlistItems",
-              params={
-                  "part": "snippet,contentDetails",
-                  "playlistId": uploads_playlist,
-                  "maxResults": 10,
-                  "key": KEY
-              },
-              timeout=20
-          )
-          response.raise_for_status()
-
-          items = response.json().get("items", [])
-
-          # ----------------------------------------
-          # 3. Find latest Rajasthan Current Affairs
-          # ----------------------------------------
-          selected = None
-
-          for item in items:
-              title = item["snippet"]["title"]
-              title_lower = title.lower()
-
-              if (
-                  "rajasthan current affairs" in title_lower
-                  or ("rajasthan" in title_lower and "sujas" in title_lower)
-              ):
-                  selected = item
-                  break
-
-          if selected is None:
-              raise SystemExit(
-                  "❌ Latest uploads में Rajasthan Current Affairs video नहीं मिला"
-              )
-
-          video_id = selected["contentDetails"]["videoId"]
-          title = selected["snippet"]["title"]
-          published = selected["contentDetails"].get(
-              "videoPublishedAt",
-              selected["snippet"]["publishedAt"]
-          )
-
-          # ----------------------------------------
-          # 4. Read previous ID
-          # ----------------------------------------
-          old_id = ""
-
-          if STATE_FILE.exists():
-              old_id = STATE_FILE.read_text(
-                  encoding="utf-8"
-              ).strip()
+          snippet = video["snippet"]
+          details = video["contentDetails"]
 
           print("========================================")
-          print("OLD VIDEO ID:", old_id or "NONE")
-          print("NEW VIDEO ID:", video_id)
-          print("TITLE:", title)
-          print("PUBLISHED:", published)
+          print("✅ RAJASTHAN VIDEO CONTENT TEST")
           print("========================================")
 
-          # ----------------------------------------
-          # 5. Duplicate check
-          # ----------------------------------------
-          if old_id == video_id:
-              print()
-              print("⏭️ SAME VIDEO")
-              print("Already processed.")
-              print("No state change required.")
+          print("TITLE:")
+          print(snippet.get("title", ""))
 
-          else:
-              print()
-              print("🆕 NEW RAJASTHAN VIDEO FOUND")
-              print("Saving video ID...")
+          print()
+          print("PUBLISHED:")
+          print(snippet.get("publishedAt", ""))
 
-              STATE_FILE.write_text(
-                  video_id,
-                  encoding="utf-8"
-              )
+          print()
+          print("DESCRIPTION:")
+          print(snippet.get("description", ""))
 
-              print("✅ State file updated")
+          print()
+          print("TAGS:")
+          print(", ".join(snippet.get("tags", [])))
+
+          print()
+          print("DURATION:")
+          print(details.get("duration", ""))
+
+          print()
+          print("CAPTIONS AVAILABLE:")
+          print(details.get("caption", ""))
 
           print()
           print("VIDEO URL:")
           print(f"https://www.youtube.com/watch?v={video_id}")
+
+          print()
           print("========================================")
           PY
-
-      # ----------------------------------------
-      # 6. Save state file to GitHub
-      # ----------------------------------------
-      - name: Save video state
-        run: |
-          git add meridian_latest_video.txt
-
-          if git diff --cached --quiet; then
-            echo "⏭️ No state change."
-          else
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-            git commit -m "Update Meridian latest video"
-            git push
-
-            echo "✅ State file committed to GitHub."
-          fi
