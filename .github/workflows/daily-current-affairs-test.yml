@@ -21,18 +21,9 @@ jobs:
           from zoneinfo import ZoneInfo
           import re
 
-          # =========================================================
-          # DATE
-          # =========================================================
-
           today = datetime.now(
               ZoneInfo("Asia/Kolkata")
           ).date()
-
-          print("=" * 70)
-          print("OFFICIAL CURRENT AFFAIRS SOURCE EXTRACTION")
-          print("Today:", today)
-          print("=" * 70)
 
           headers = {
               "User-Agent": (
@@ -41,6 +32,11 @@ jobs:
                   "Chrome/140.0 Safari/537.36"
               )
           }
+
+          print("=" * 70)
+          print("OFFICIAL CURRENT AFFAIRS SOURCE EXTRACTION")
+          print("Today:", today)
+          print("=" * 70)
 
           # =========================================================
           # 1. RAJASTHAN DST
@@ -73,7 +69,7 @@ jobs:
                       ["td", "th"]
                   )
 
-                  if len(cells) < 2:
+                  if len(cells) < 3:
                       continue
 
                   values = [
@@ -86,7 +82,6 @@ jobs:
 
                   text = " | ".join(values)
 
-                  # Date: 03/09/2026
                   match = re.search(
                       r"\b(\d{2}/\d{2}/\d{4})\b",
                       text
@@ -109,50 +104,36 @@ jobs:
                       today - item_date
                   ).days
 
-                  # Last 7 days
                   if days_old < 0 or days_old > 7:
                       continue
 
-                  # Find useful title
-                  title = ""
+                  # Table format:
+                  # S.No | Title | Date | Download
+                  title = values[1]
 
-                  for value in values:
-                      if len(value) >= 20:
-                          if (
-                              "03/" not in value
-                              and "04/" not in value
-                              and "05/" not in value
-                          ):
-                              title = value
-                              break
-
-                  if not title:
+                  if len(title) < 15:
                       continue
 
-                  # Find actual link
-                  link = dst_url
+                  # Ignore administrative/tender notices
+                  ignore_words = [
+                      "tender",
+                      "corrigendum",
+                      "auction",
+                      "निविदा",
+                      "नीलामी"
+                  ]
 
-                  a = row.find("a")
-
-                  if a and a.get("href"):
-                      href = a.get("href")
-
-                      if href.startswith("http"):
-                          link = href
-                      elif href.startswith("/"):
-                          link = (
-                              "https://dst.rajasthan.gov.in"
-                              + href
-                          )
+                  if any(
+                      word.lower() in title.lower()
+                      for word in ignore_words
+                  ):
+                      continue
 
                   print("\n📌 Title:", title)
                   print("📅 Date:", date_text)
-                  print("🔗 Source:", link)
+                  print("🔗 Source:", dst_url)
 
                   dst_count += 1
-
-                  if dst_count >= 10:
-                      break
 
               print(
                   "\nDST useful entries:",
@@ -160,14 +141,13 @@ jobs:
               )
 
           except Exception as e:
-
               print(
                   "DST ERROR:",
                   str(e)
               )
 
           # =========================================================
-          # 2. PIB — SCIENCE & TECHNOLOGY
+          # 2. PIB SCIENCE & TECHNOLOGY
           # =========================================================
 
           print("\n💻 PIB — SCIENCE & TECHNOLOGY")
@@ -175,12 +155,11 @@ jobs:
 
           pib_url = (
               "https://www.pib.gov.in/"
-              "AllRelease.aspx?"
-              "MenuId=30&lang=1&reg=3"
+              "Newsite/pmreleases.aspx?"
+              "lang=1&mincode=3&reg=48"
           )
 
           try:
-
               r = requests.get(
                   pib_url,
                   headers=headers,
@@ -197,7 +176,6 @@ jobs:
                   "html.parser"
               )
 
-              # Technology/science keywords
               keywords = [
                   "ISRO",
                   "space",
@@ -207,7 +185,6 @@ jobs:
                   "PSLV",
                   "EOS",
                   "artificial intelligence",
-                  "AI",
                   "technology",
                   "science",
                   "quantum",
@@ -217,18 +194,15 @@ jobs:
                   "biotechnology",
                   "research",
                   "innovation",
+                  "robotics",
                   "astronomy",
-                  "nuclear",
-                  "robotics"
+                  "nuclear"
               ]
 
               seen = set()
               pib_count = 0
 
-              # =====================================================
-              # PIB page में सभी links देखो
-              # =====================================================
-
+              # PIB listing has actual release links
               for a in soup.find_all("a"):
 
                   title = a.get_text(
@@ -244,29 +218,95 @@ jobs:
 
                   title_lower = title.lower()
 
-                  # Technology/science filter
+                  # Technology/science relevance
                   if not any(
-                      k.lower() in title_lower
-                      for k in keywords
+                      keyword.lower()
+                      in title_lower
+                      for keyword in keywords
                   ):
                       continue
 
-                  # Duplicate
-                  key = re.sub(
-                      r"\s+",
-                      " ",
-                      title_lower
-                  ).strip()
+                  # Extract date from the same listing block
+                  parent = a.parent
+
+                  block_text = ""
+
+                  if parent:
+                      block_text = parent.get_text(
+                          " ",
+                          strip=True
+                      )
+
+                  if parent and parent.parent:
+                      block_text += " " + (
+                          parent.parent.get_text(
+                              " ",
+                              strip=True
+                          )
+                      )
+
+                  date_match = re.search(
+                      r"\((\d{1,2})-"
+                      r"([A-Za-z]+)-"
+                      r"(\d{4})\)",
+                      block_text
+                  )
+
+                  item_date = None
+
+                  if date_match:
+
+                      day = int(
+                          date_match.group(1)
+                      )
+
+                      month_name = (
+                          date_match.group(2)
+                      )
+
+                      year = int(
+                          date_match.group(3)
+                      )
+
+                      try:
+                          item_date = datetime.strptime(
+                              f"{day}-{month_name}-{year}",
+                              "%d-%B-%Y"
+                          ).date()
+
+                      except:
+                          # Try abbreviated month
+                          try:
+                              item_date = datetime.strptime(
+                                  f"{day}-{month_name}-{year}",
+                                  "%d-%b-%Y"
+                              ).date()
+
+                          except:
+                              item_date = None
+
+                  # Only recent releases
+                  if item_date:
+
+                      days_old = (
+                          today - item_date
+                      ).days
+
+                      if (
+                          days_old < 0
+                          or days_old > 3
+                      ):
+                          continue
+
+                  # Duplicate protection
+                  key = title.lower()
 
                   if key in seen:
                       continue
 
                   seen.add(key)
 
-                  # =================================================
                   # Link
-                  # =================================================
-
                   href = a.get(
                       "href",
                       ""
@@ -281,81 +321,11 @@ jobs:
                           + href
                       )
 
-                  elif href:
+                  else:
                       link = (
                           "https://www.pib.gov.in/"
                           + href.lstrip("./")
                       )
-
-                  else:
-                      link = pib_url
-
-                  # =================================================
-                  # Date खोजने की कोशिश
-                  # =================================================
-
-                  parent_text = ""
-
-                  parent = a.parent
-
-                  if parent:
-                      parent_text = parent.get_text(
-                          " ",
-                          strip=True
-                      )
-
-                  # आसपास के element में भी date खोजो
-                  container_text = parent_text
-
-                  if parent and parent.parent:
-                      container_text += " " + (
-                          parent.parent.get_text(
-                              " ",
-                              strip=True
-                          )
-                      )
-
-                  date_match = re.search(
-                      r"(\d{1,2})[/-]"
-                      r"(\d{1,2})[/-]"
-                      r"(\d{4})",
-                      container_text
-                  )
-
-                  item_date = None
-
-                  if date_match:
-
-                      try:
-                          item_date = datetime(
-                              int(
-                                  date_match.group(3)
-                              ),
-                              int(
-                                  date_match.group(2)
-                              ),
-                              int(
-                                  date_match.group(1)
-                              )
-                          ).date()
-
-                      except:
-                          item_date = None
-
-                  # अगर date नहीं मिली तो भी title दिखाओ
-                  # ताकि extraction diagnose हो सके
-
-                  if item_date:
-
-                      days_old = (
-                          today - item_date
-                      ).days
-
-                      if (
-                          days_old < 0
-                          or days_old > 3
-                      ):
-                          continue
 
                   print(
                       "\n📌 Title:",
@@ -391,7 +361,6 @@ jobs:
               )
 
           except Exception as e:
-
               print(
                   "PIB ERROR:",
                   str(e)
