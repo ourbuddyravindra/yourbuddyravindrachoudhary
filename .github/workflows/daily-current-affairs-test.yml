@@ -19,6 +19,7 @@ jobs:
           python - <<'PY'
           from google import genai
           import os
+          import time
           from datetime import datetime
           from zoneinfo import ZoneInfo
 
@@ -42,23 +43,20 @@ jobs:
 
           STRICT RULES:
 
-          1. आज की तारीख को ध्यान में रखो।
-          2. केवल हाल की और परीक्षा-उपयोगी घटनाएँ शामिल करो।
-          3. राजस्थान category की खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
-          4. Technology category में AI, Space, ISRO,
-             Digital Technology, Cyber, Science और महत्वपूर्ण
-             technological developments शामिल किए जा सकते हैं।
-          5. सामान्य India politics/news शामिल मत करो।
-          6. Entertainment, celebrity, सामान्य मौसम आदि शामिल मत करो।
-          7. सिर्फ संख्या बढ़ाने के लिए कमजोर खबरें मत जोड़ो।
-          8. अगर कोई महत्वपूर्ण खबर नहीं है तो category खाली रखो।
-          9. कोई fact invent मत करो।
-          10. प्रत्येक खबर के साथ source और source date दो।
-          11. Hindi में concise और exam-oriented भाषा रखो।
-          12. महत्वपूर्ण facts के बाद MCQ बनाओ।
-          13. MCQ का सही उत्तर स्पष्ट रूप से बताओ।
-          14. आज की तारीख से असंगत पुरानी खबर को current
-              affair के रूप में प्रस्तुत मत करो।
+          1. केवल हाल की और परीक्षा-उपयोगी घटनाएँ शामिल करो।
+          2. राजस्थान category की खबर का राजस्थान से स्पष्ट संबंध होना चाहिए।
+          3. Technology में AI, Space, ISRO, Digital Technology,
+             Cyber, Science और महत्वपूर्ण technological developments
+             शामिल किए जा सकते हैं।
+          4. सामान्य India politics/news शामिल मत करो।
+          5. Entertainment, celebrity और सामान्य मौसम शामिल मत करो।
+          6. कमजोर या filler खबरें मत जोड़ो।
+          7. कोई fact invent मत करो।
+          8. प्रत्येक खबर के साथ source और source date दो।
+          9. Hindi में concise और exam-oriented भाषा रखो।
+          10. महत्वपूर्ण facts के बाद MCQs बनाओ।
+          11. MCQ का सही उत्तर स्पष्ट रूप से बताओ।
+          12. पुरानी खबर को आज की current affair के रूप में प्रस्तुत मत करो।
 
           OUTPUT FORMAT:
 
@@ -93,15 +91,53 @@ jobs:
           केवल verified और genuinely important information दो।
           """
 
-          response = client.models.generate_content(
-              model="gemini-3.5-flash",
-              contents=prompt
-          )
+          models = [
+              "gemini-3.5-flash",
+              "gemini-3.6-flash",
+              "gemini-3.7-flash"
+          ]
 
-          print("")
-          print("==============================")
-          print(f"📅 करेंट अफेयर्स — {today}")
-          print("==============================")
-          print("")
-          print(response.text)
+          for model in models:
+              print(f"Trying model: {model}")
+
+              for attempt in range(3):
+                  try:
+                      print(f"Attempt: {attempt + 1}")
+
+                      response = client.models.generate_content(
+                          model=model,
+                          contents=prompt
+                      )
+
+                      print("")
+                      print("==============================")
+                      print(f"📅 करेंट अफेयर्स — {today}")
+                      print(f"🤖 Model: {model}")
+                      print("==============================")
+                      print("")
+                      print(response.text)
+
+                      raise SystemExit(0)
+
+                  except SystemExit:
+                      raise
+
+                  except Exception as e:
+                      print(
+                          f"Error: {type(e).__name__}: {e}"
+                      )
+
+                      if attempt < 2:
+                          wait_time = 15 * (attempt + 1)
+                          print(
+                              f"Retrying after {wait_time} seconds..."
+                          )
+                          time.sleep(wait_time)
+
+              print(f"Model failed: {model}")
+              print("Trying next model...")
+
+          raise RuntimeError(
+              "All Gemini models failed after retries."
+          )
           PY
