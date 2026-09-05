@@ -1,0 +1,599 @@
+name: Approved Current Affairs Collector
+
+on:
+  schedule:
+    - cron: '12,42 * * * *'
+      timezone: "Asia/Kolkata"
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: approved-current-affairs
+  cancel-in-progress: true
+
+jobs:
+  collect:
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+
+      # ==========================================
+      # 1. CHECKOUT
+      # ==========================================
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+
+      # ==========================================
+      # 2. COLLECT APPROVED SOURCES
+      # ==========================================
+      - name: Collect approved source data
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+
+        run: |
+
+          python - <<'PY'
+
+          import json
+          import os
+          import re
+          import requests
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+
+          # ==================================================
+          # APPROVED SOURCES
+          # ==================================================
+
+          INSTAGRAM_SOURCES = [
+              "https://www.instagram.com/shiv_kumar8094/",
+              "https://www.instagram.com/neerajsircurrentaffairs/",
+              "https://www.instagram.com/success_academy_hmh/",
+              "https://www.instagram.com/exams_shorts/",
+              "https://www.instagram.com/testboard_rajasthan/",
+              "https://www.instagram.com/smartstudyplus2/",
+              "https://www.instagram.com/rpscranker/",
+              "https://www.instagram.com/rajasthan_currentaffair/",
+              "https://www.instagram.com/noteshubgk/",
+              "https://www.instagram.com/diprrajasthan/",
+              "https://www.instagram.com/kumargaurav5555/"
+          ]
+
+
+          YOUTUBE_CHANNEL = {
+              "name": "Meridian Academy",
+              "handle": "meridian.academy",
+              "url": "https://youtube.com/@meridian.academy"
+          }
+
+
+          OUTPUT_FILE = Path(
+              "approved_sources.json"
+          )
+
+
+          # ==================================================
+          # HELPERS
+          # ==================================================
+
+          session = requests.Session()
+
+          session.headers.update({
+              "User-Agent": (
+                  "Mozilla/5.0 "
+                  "(Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 "
+                  "(KHTML, like Gecko) "
+                  "Chrome/140.0 Safari/537.36"
+              )
+          })
+
+
+          def clean_text(text):
+
+              if not text:
+                  return ""
+
+              text = re.sub(
+                  r"\s+",
+                  " ",
+                  text
+              )
+
+              return text.strip()
+
+
+          # ==================================================
+          # RESULT STRUCTURE
+          # ==================================================
+
+          result = {
+
+              "collector": {
+                  "name": "Approved Current Affairs Collector",
+                  "generated_at": datetime.now(
+                      timezone.utc
+                  ).isoformat()
+              },
+
+              "sources": [],
+
+              "items": []
+          }
+
+
+          # ==================================================
+          # INSTAGRAM SOURCES
+          # ==================================================
+
+          print("")
+          print("========================================")
+          print("INSTAGRAM SOURCES")
+          print("========================================")
+
+          for source_url in INSTAGRAM_SOURCES:
+
+              source_record = {
+
+                  "type": "instagram",
+                  "url": source_url,
+                  "status": "unknown"
+              }
+
+
+              try:
+
+                  response = session.get(
+                      source_url,
+                      timeout=15,
+                      allow_redirects=True
+                  )
+
+
+                  source_record["http_status"] = (
+                      response.status_code
+                  )
+
+
+                  html = response.text
+
+
+                  # ------------------------------------------
+                  # Try to extract public page title
+                  # ------------------------------------------
+
+                  title_match = re.search(
+                      r"<title[^>]*>(.*?)</title>",
+                      html,
+                      re.IGNORECASE | re.DOTALL
+                  )
+
+
+                  if title_match:
+
+                      title = clean_text(
+                          title_match.group(1)
+                      )
+
+                      source_record["title"] = title
+
+
+                  # ------------------------------------------
+                  # Detect whether useful public content
+                  # ------------------------------------------
+
+                  useful_markers = [
+                      "instagram",
+                      "og:title",
+                      "og:description"
+                  ]
+
+
+                  lower_html = html.lower()
+
+
+                  if (
+                      response.ok
+                      and any(
+                          marker in lower_html
+                          for marker in useful_markers
+                      )
+                  ):
+
+                      source_record["status"] = (
+                          "public_page_reachable"
+                      )
+
+                      print(
+                          "✅",
+                          source_url
+                      )
+
+                  else:
+
+                      source_record["status"] = (
+                          "not_reliably_accessible"
+                      )
+
+                      print(
+                          "⚠️",
+                          source_url
+                      )
+
+
+              except Exception as exc:
+
+                  source_record["status"] = (
+                      "request_failed"
+                  )
+
+                  source_record["error"] = (
+                      str(exc)[:200]
+                  )
+
+                  print(
+                      "⚠️",
+                      source_url,
+                      "-",
+                      str(exc)[:100]
+                  )
+
+
+              result["sources"].append(
+                  source_record
+              )
+
+
+          # ==================================================
+          # MERIDIAN ACADEMY
+          # ==================================================
+
+          print("")
+          print("========================================")
+          print("MERIDIAN ACADEMY")
+          print("========================================")
+
+
+          api_key = os.environ.get(
+              "YOUTUBE_API_KEY",
+              ""
+          )
+
+
+          if not api_key:
+
+              print(
+                  "⚠️ YOUTUBE_API_KEY नहीं मिला"
+              )
+
+              result["sources"].append({
+                  "type": "youtube",
+                  "name": "Meridian Academy",
+                  "url": YOUTUBE_CHANNEL["url"],
+                  "status": "missing_api_key"
+              })
+
+
+          else:
+
+              try:
+
+                  # ------------------------------------------
+                  # Get channel
+                  # ------------------------------------------
+
+                  response = session.get(
+                      "https://www.googleapis.com/youtube/v3/channels",
+                      params={
+                          "part": "contentDetails",
+                          "forHandle": YOUTUBE_CHANNEL["handle"],
+                          "key": api_key
+                      },
+                      timeout=20
+                  )
+
+                  response.raise_for_status()
+
+                  channel_data = response.json()
+
+
+                  if not channel_data.get("items"):
+
+                      raise RuntimeError(
+                          "Meridian Academy channel नहीं मिला"
+                      )
+
+
+                  uploads_playlist = (
+                      channel_data["items"][0]
+                      ["contentDetails"]
+                      ["relatedPlaylists"]
+                      ["uploads"]
+                  )
+
+
+                  # ------------------------------------------
+                  # Get latest uploads
+                  # ------------------------------------------
+
+                  response = session.get(
+                      "https://www.googleapis.com/youtube/v3/playlistItems",
+                      params={
+                          "part": "snippet,contentDetails",
+                          "playlistId": uploads_playlist,
+                          "maxResults": 10,
+                          "key": api_key
+                      },
+                      timeout=20
+                  )
+
+                  response.raise_for_status()
+
+                  items = response.json().get(
+                      "items",
+                      []
+                  )
+
+
+                  # ------------------------------------------
+                  # Find Rajasthan Current Affairs
+                  # ------------------------------------------
+
+                  selected = None
+
+
+                  for item in items:
+
+                      title = item["snippet"]["title"]
+
+                      title_lower = title.lower()
+
+
+                      if (
+                          "rajasthan current affairs"
+                          in title_lower
+
+                          or
+
+                          (
+                              "rajasthan" in title_lower
+                              and
+                              "sujas" in title_lower
+                          )
+                      ):
+
+                          selected = item
+
+                          break
+
+
+                  if selected:
+
+                      video_id = (
+                          selected["contentDetails"]
+                          ["videoId"]
+                      )
+
+                      title = (
+                          selected["snippet"]
+                          ["title"]
+                      )
+
+                      published = (
+                          selected["contentDetails"]
+                          .get(
+                              "videoPublishedAt",
+                              selected["snippet"]
+                              ["publishedAt"]
+                          )
+                      )
+
+                      video_url = (
+                          "https://www.youtube.com/watch?v="
+                          + video_id
+                      )
+
+
+                      video_record = {
+
+                          "type": "youtube",
+
+                          "source": (
+                              "Meridian Academy"
+                          ),
+
+                          "source_url": (
+                              YOUTUBE_CHANNEL["url"]
+                          ),
+
+                          "video_id": video_id,
+
+                          "title": title,
+
+                          "published_at": published,
+
+                          "url": video_url,
+
+                          "content_status": (
+                              "metadata_only"
+                          ),
+
+                          "note": (
+                              "Public YouTube metadata "
+                              "available. Video transcript "
+                              "is not assumed."
+                          )
+                      }
+
+
+                      result["items"].append(
+                          video_record
+                      )
+
+
+                      result["sources"].append({
+
+                          "type": "youtube",
+
+                          "name": (
+                              "Meridian Academy"
+                          ),
+
+                          "url": (
+                              YOUTUBE_CHANNEL["url"]
+                          ),
+
+                          "status": "success",
+
+                          "latest_rajasthan_video": {
+                              "video_id": video_id,
+                              "title": title,
+                              "published_at": published,
+                              "url": video_url
+                          }
+
+                      })
+
+
+                      print(
+                          "✅ Latest Rajasthan video:"
+                      )
+
+                      print(title)
+
+                      print(video_url)
+
+
+                  else:
+
+                      result["sources"].append({
+
+                          "type": "youtube",
+
+                          "name": (
+                              "Meridian Academy"
+                          ),
+
+                          "url": (
+                              YOUTUBE_CHANNEL["url"]
+                          ),
+
+                          "status": (
+                              "rajasthan_video_not_found"
+                          )
+                      })
+
+
+                      print(
+                          "⚠️ Rajasthan video नहीं मिला"
+                      )
+
+
+              except Exception as exc:
+
+                  result["sources"].append({
+
+                      "type": "youtube",
+
+                      "name": (
+                          "Meridian Academy"
+                      ),
+
+                      "url": (
+                          YOUTUBE_CHANNEL["url"]
+                      ),
+
+                      "status": "error",
+
+                      "error": str(exc)[:300]
+
+                  })
+
+
+                  print(
+                      "❌ YouTube error:",
+                      str(exc)
+                  )
+
+
+          # ==================================================
+          # SAVE JSON
+          # ==================================================
+
+          OUTPUT_FILE.write_text(
+
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+
+              encoding="utf-8"
+          )
+
+
+          # ==================================================
+          # SUMMARY
+          # ==================================================
+
+          print("")
+          print("========================================")
+          print("COLLECTOR SUMMARY")
+          print("========================================")
+
+          print(
+              "Total sources:",
+              len(result["sources"])
+          )
+
+          print(
+              "Collected items:",
+              len(result["items"])
+          )
+
+          print(
+              "Output:",
+              OUTPUT_FILE
+          )
+
+          print("========================================")
+
+
+          PY
+
+
+      # ==========================================
+      # 3. SAVE COLLECTED DATA
+      # ==========================================
+      - name: Save collected source data
+        run: |
+
+          git add approved_sources.json
+
+          if git diff --cached --quiet; then
+
+            echo "⏭️ No source data change."
+
+          else
+
+            git config user.name \
+              "github-actions[bot]"
+
+            git config user.email \
+              "41898282+github-actions[bot]@users.noreply.github.com"
+
+            git commit \
+              -m "Update approved current affairs sources"
+
+            git push
+
+            echo "✅ Source data saved."
+
+          fi
