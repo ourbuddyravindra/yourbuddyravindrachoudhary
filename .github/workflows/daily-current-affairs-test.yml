@@ -11,7 +11,7 @@ jobs:
     steps:
 
       # =========================================================
-      # 1. INSTALL OCR TOOLS
+      # 1. INSTALL TOOLS
       # =========================================================
       - name: Install OCR tools
         run: |
@@ -22,17 +22,17 @@ jobs:
             tesseract-ocr-hin \
             tesseract-ocr-eng
 
-          python -m pip install --upgrade pip
           pip install requests
 
-          echo "Tesseract:"
+          echo "===== TESSERACT ====="
           tesseract --version
 
-          echo "Languages:"
+          echo "===== LANGUAGES ====="
           tesseract --list-langs
 
+
       # =========================================================
-      # 2. DOWNLOAD LATEST SUJAS PDF
+      # 2. DOWNLOAD LATEST SUJAS
       # =========================================================
       - name: Download latest Sujas PDF
         run: |
@@ -140,11 +140,11 @@ jobs:
 
           print("PDF SIZE:", len(pdf.content))
           print("DOWNLOAD SUCCESS")
-
           PY
 
+
       # =========================================================
-      # 3. PDF -> HIGH QUALITY IMAGES
+      # 3. PDF -> IMAGES
       # =========================================================
       - name: Convert PDF to images
         run: |
@@ -157,14 +157,15 @@ jobs:
             sujas_today.pdf \
             pages/page
 
-          echo "Generated pages:"
+          echo "===== PAGES ====="
           ls -lh pages/
 
-          echo "TOTAL IMAGES:"
+          echo "TOTAL PAGES:"
           find pages -type f | wc -l
 
+
       # =========================================================
-      # 4. HINDI OCR
+      # 4. HINDI + ENGLISH OCR
       # =========================================================
       - name: Hindi OCR
         run: |
@@ -172,11 +173,14 @@ jobs:
 
           for image in pages/page-*.jpg
           do
+            PAGE=$(basename "$image" .jpg | sed 's/page-//')
+
             echo ""
             echo "======================================"
-            echo "OCR:"
-            echo "$image"
+            echo "OCR PAGE: $PAGE"
             echo "======================================"
+
+            echo "===== PAGE $PAGE =====" >> sujas_ocr.txt
 
             tesseract "$image" stdout \
               -l hin+eng \
@@ -184,7 +188,6 @@ jobs:
               2>/dev/null >> sujas_ocr.txt
 
             echo "" >> sujas_ocr.txt
-            echo "--- PAGE END ---" >> sujas_ocr.txt
             echo "" >> sujas_ocr.txt
           done
 
@@ -193,7 +196,7 @@ jobs:
           echo "OCR COMPLETE"
           echo "======================================"
 
-          echo "TEXT CHARACTERS:"
+          echo "OCR CHARACTERS:"
           wc -m sujas_ocr.txt
 
           echo ""
@@ -202,20 +205,22 @@ jobs:
           echo ""
           echo "================================="
 
+
       # =========================================================
-      # 5. GEMINI
+      # 5. SOURCE-STRICT GEMINI
       # =========================================================
-      - name: Process OCR with Gemini
+      - name: Source Strict Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import os
+          import json
           import time
           import requests
           from pathlib import Path
 
-          key = os.environ["GEMINI_API_KEY"]
+          API_KEY = os.environ["GEMINI_API_KEY"]
 
           text = Path("sujas_ocr.txt").read_text(
               encoding="utf-8",
@@ -226,51 +231,165 @@ jobs:
 
           if len(text.strip()) < 1000:
               raise SystemExit(
-                  "OCR text बहुत कम है — OCR quality check करनी होगी."
+                  "OCR text बहुत कम है."
               )
 
-          # अभी test के लिए 30000 characters
+          # पूरा OCR भेज रहे हैं
           source = text[:30000]
 
+          # =====================================================
+          # STRICT SCHEMA
+          # =====================================================
+
+          schema = {
+              "type": "object",
+              "properties": {
+                  "items": {
+                      "type": "array",
+                      "items": {
+                          "type": "object",
+                          "properties": {
+                              "title": {
+                                  "type": "string"
+                              },
+                              "fact": {
+                                  "type": "string"
+                              },
+                              "question": {
+                                  "type": "string"
+                              },
+                              "option_a": {
+                                  "type": "string"
+                              },
+                              "option_b": {
+                                  "type": "string"
+                              },
+                              "option_c": {
+                                  "type": "string"
+                              },
+                              "option_d": {
+                                  "type": "string"
+                              },
+                              "answer": {
+                                  "type": "string",
+                                  "enum": [
+                                      "A",
+                                      "B",
+                                      "C",
+                                      "D"
+                                  ]
+                              },
+                              "page": {
+                                  "type": "integer"
+                              }
+                          },
+                          "required": [
+                              "title",
+                              "fact",
+                              "question",
+                              "option_a",
+                              "option_b",
+                              "option_c",
+                              "option_d",
+                              "answer",
+                              "page"
+                          ]
+                      }
+                  }
+              },
+              "required": [
+                  "items"
+              ]
+          }
+
+
+          # =====================================================
+          # PROMPT
+          # =====================================================
+
           prompt = f"""
-          तुम RPSC और RSSB के लिए Current Affairs editor हो।
+          तुम RPSC और RSSB के लिए राजस्थान Current Affairs
+          question editor हो।
 
-          नीचे राजस्थान सरकार के DIPR द्वारा प्रकाशित
-          SUJAS e-Bulletin का OCR किया हुआ वास्तविक text है।
+          तुम्हें केवल नीचे दिए गए SUJAS OCR SOURCE से
+          प्रश्न बनाने हैं।
 
-          केवल इसी source से महत्वपूर्ण current affairs निकालो।
+          ================================
+          सबसे महत्वपूर्ण नियम
+          ================================
 
-          IMPORTANT:
-          - कोई fact invent मत करो।
-          - अगर OCR में कोई नाम/संख्या स्पष्ट नहीं है तो उसे मत लो।
-          - पुराने/general facts मत बनाओ।
-          - केवल source में मौजूद वर्तमान घटनाओं को लो।
-          - राजस्थान से संबंधित सभी महत्वपूर्ण exam-worthy घटनाओं
-            को प्राथमिकता दो।
-          - योजनाएं, नियुक्तियां, पुरस्कार, व्यक्ति, खेल,
-            अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य, पर्यावरण,
-            उद्योग, निवेश, infrastructure, reports, science-tech,
-            AI/digital आदि शामिल करो।
-          - महत्वपूर्ण national/science-tech information भी लो
-            अगर source में स्पष्ट रूप से मौजूद हो।
+          1. SOURCE के बाहर की कोई जानकारी मत जोड़ो।
 
-          प्रत्येक item इस format में दो:
+          2. अपनी सामान्य knowledge का इस्तेमाल मत करो।
 
-          शीर्षक:
-          तथ्य:
-          प्रश्न:
-          (A)
-          (B)
-          (C)
-          (D)
-          सही उत्तर:
+          3. किसी व्यक्ति का पद, नाम, संख्या, तारीख,
+             योजना, स्थान या तथ्य SOURCE में स्पष्ट नहीं है
+             तो उसे मत लिखो।
 
-          कम से कम 10 अच्छे और वास्तविक items निकालने की कोशिश करो।
-          बेकार information को शामिल मत करो।
+          4. यदि OCR में कोई शब्द अस्पष्ट है तो उस fact को
+             छोड़ दो।
 
-          SOURCE:
+          5. अनुमान लगाकर खाली जानकारी मत भरो।
+
+          6. एक ही fact को अलग-अलग तरीके से बार-बार
+             question मत बनाओ।
+
+          7. केवल exam-worthy information चुनो।
+
+          8. राजस्थान की महत्वपूर्ण घटनाओं को प्राथमिकता दो।
+
+          9. निम्न categories पर ध्यान दो:
+             - नियुक्तियां
+             - योजनाएं
+             - सरकारी कार्यक्रम
+             - नीतियां
+             - बजट/अर्थव्यवस्था
+             - कृषि
+             - शिक्षा
+             - स्वास्थ्य
+             - खेल
+             - पुरस्कार
+             - महत्वपूर्ण व्यक्ति
+             - स्थान
+             - infrastructure
+             - investment
+             - environment
+             - elections
+             - science & technology
+             - AI/digital
+             - अन्य महत्वपूर्ण exam facts
+
+          10. हर item के साथ सही PAGE NUMBER देना जरूरी है।
+
+          11. PAGE NUMBER केवल SOURCE में दिए गए
+              "===== PAGE X =====" marker से निर्धारित करो।
+
+          12. अगर किसी fact का page स्पष्ट रूप से निर्धारित
+              नहीं हो सकता तो उस fact को छोड़ दो।
+
+          13. गलत distractor भी मत बनाओ।
+              Options ऐसे होने चाहिए कि सही answer
+              SOURCE में स्पष्ट रूप से मौजूद हो।
+
+          14. कम लेकिन बिल्कुल सही questions देना
+              ज्यादा questions देने से बेहतर है।
+
+          15. लगभग 10-15 सबसे महत्वपूर्ण questions दो।
+
+          ================================
+          OUTPUT
+          ================================
+
+          केवल JSON format में output दो।
+          कोई explanation, markdown या अतिरिक्त text नहीं।
+
+          ================================
+          SUJAS SOURCE
+          ================================
+
           {source}
           """
+
 
           models = [
               "gemini-3.5-flash-lite",
@@ -303,7 +422,9 @@ jobs:
                       }
                   ],
                   "generationConfig": {
-                      "temperature": 0.1
+                      "temperature": 0,
+                      "responseMimeType": "application/json",
+                      "responseSchema": schema
                   }
               }
 
@@ -317,9 +438,11 @@ jobs:
 
                       response = requests.post(
                           url,
-                          params={"key": key},
+                          params={
+                              "key": API_KEY
+                          },
                           json=payload,
-                          timeout=90
+                          timeout=120
                       )
 
                       print(
@@ -336,26 +459,104 @@ jobs:
                               ["content"]["parts"][0]["text"]
                           )
 
+                          # JSON validate
+                          result = json.loads(output)
+
+                          items = result.get(
+                              "items",
+                              []
+                          )
+
                           print("")
-                          print("========== FINAL GEMINI RESULT ==========")
-                          print(output)
-                          print("==========================================")
+                          print(
+                              "TOTAL QUESTIONS:",
+                              len(items)
+                          )
+
+                          print("")
+                          print(
+                              "========== SOURCE-STRICT RESULT =========="
+                          )
+
+                          for i, item in enumerate(
+                              items,
+                              start=1
+                          ):
+
+                              print("")
+                              print(
+                                  f"Q{i}. "
+                                  f"{item['question']}"
+                              )
+
+                              print(
+                                  f"A) {item['option_a']}"
+                              )
+
+                              print(
+                                  f"B) {item['option_b']}"
+                              )
+
+                              print(
+                                  f"C) {item['option_c']}"
+                              )
+
+                              print(
+                                  f"D) {item['option_d']}"
+                              )
+
+                              print(
+                                  f"ANSWER: "
+                                  f"{item['answer']}"
+                              )
+
+                              print(
+                                  f"PAGE: "
+                                  f"{item['page']}"
+                              )
+
+                              print(
+                                  f"FACT: "
+                                  f"{item['fact']}"
+                              )
+
+                          print("")
+                          print(
+                              "=========================================="
+                          )
+
+                          Path(
+                              "current_affairs.json"
+                          ).write_text(
+                              json.dumps(
+                                  result,
+                                  ensure_ascii=False,
+                                  indent=2
+                              ),
+                              encoding="utf-8"
+                          )
 
                           success = True
                           break
 
                       print(
-                          response.text[:1500]
+                          response.text[:2000]
                       )
 
                       if response.status_code in [
-                          429, 500, 502, 503, 504
+                          429,
+                          500,
+                          502,
+                          503,
+                          504
                       ]:
-                          wait = 10 * (attempt + 1)
+
+                          wait = 10 * (
+                              attempt + 1
+                          )
 
                           print(
-                              "Temporary error."
-                              f" Waiting {wait}s..."
+                              f"Waiting {wait}s..."
                           )
 
                           time.sleep(wait)
@@ -366,7 +567,7 @@ jobs:
                   except Exception as e:
 
                       print(
-                          "REQUEST ERROR:",
+                          "ERROR:",
                           repr(e)
                       )
 
@@ -375,12 +576,15 @@ jobs:
 
               if success:
                   print("")
-                  print("SUCCESS MODEL:", model)
+                  print(
+                      "SUCCESS MODEL:",
+                      model
+                  )
                   break
 
           if not success:
               raise SystemExit(
-                  "Gemini failed with all available models."
+                  "Gemini failed."
               )
 
           PY
