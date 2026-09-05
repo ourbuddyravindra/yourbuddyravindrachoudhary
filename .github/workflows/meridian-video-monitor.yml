@@ -22,7 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
-      - name: Detect new Rajasthan video
+      - name: Detect latest Rajasthan video
         id: detect
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
@@ -73,11 +73,14 @@ jobs:
 
           for item in items:
               title = item["snippet"]["title"]
-              t = title.lower()
+              title_lower = title.lower()
 
               if (
-                  "rajasthan current affairs" in t
-                  or ("rajasthan" in t and "sujas" in t)
+                  "rajasthan current affairs" in title_lower
+                  or (
+                      "rajasthan" in title_lower
+                      and "sujas" in title_lower
+                  )
               ):
                   selected = item
                   break
@@ -94,6 +97,8 @@ jobs:
               selected["snippet"]["publishedAt"]
           )
 
+          video_url = f"https://www.youtube.com/watch?v={video_id}"
+
           old_id = ""
 
           if STATE_FILE.exists():
@@ -101,24 +106,27 @@ jobs:
                   encoding="utf-8"
               ).strip()
 
-          print("OLD VIDEO:", old_id or "NONE")
-          print("NEW VIDEO:", video_id)
+          print("========================================")
+          print("MERIDIAN RAJASTHAN VIDEO MONITOR")
+          print("========================================")
+          print("OLD VIDEO ID:", old_id or "NONE")
+          print("NEW VIDEO ID:", video_id)
           print("TITLE:", title)
           print("PUBLISHED:", published)
+          print("========================================")
 
           if old_id == video_id:
-              print("⏭️ SAME VIDEO")
+              print("⏭️ SAME VIDEO — NOTHING TO DO")
               print("NEW_VIDEO=false")
+
           else:
-              print("🆕 NEW VIDEO")
-              print("NEW_VIDEO=true")
+              print("🆕 NEW RAJASTHAN VIDEO FOUND")
 
               STATE_FILE.write_text(
                   video_id,
                   encoding="utf-8"
               )
 
-              # GitHub Actions outputs
               with open(
                   os.environ["GITHUB_OUTPUT"],
                   "a",
@@ -126,12 +134,15 @@ jobs:
               ) as f:
                   f.write("new_video=true\n")
                   f.write(f"video_id={video_id}\n")
-                  f.write(f"title<<EOF\n{title}\nEOF\n")
+                  f.write(f"video_url={video_url}\n")
                   f.write(f"published={published}\n")
+                  f.write("title<<EOF\n")
+                  f.write(title + "\n")
+                  f.write("EOF\n")
 
           PY
 
-      - name: Save new video state
+      - name: Save video state
         run: |
           git add meridian_latest_video.txt
 
@@ -146,3 +157,52 @@ jobs:
 
             echo "✅ State committed."
           fi
+
+      - name: Send Telegram notification
+        if: steps.detect.outputs.new_video == 'true'
+        env:
+          CURRENT_AFFAIRS_BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: "@yourbuddyravindrachoudhary"
+          VIDEO_TITLE: ${{ steps.detect.outputs.title }}
+          VIDEO_URL: ${{ steps.detect.outputs.video_url }}
+          PUBLISHED: ${{ steps.detect.outputs.published }}
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+
+          token = os.environ["CURRENT_AFFAIRS_BOT_TOKEN"]
+          channel = os.environ["TELEGRAM_CHANNEL"]
+          title = os.environ["VIDEO_TITLE"]
+          video_url = os.environ["VIDEO_URL"]
+
+          message = (
+              "🆕 <b>नई Rajasthan Current Affairs Video</b>\n\n"
+              f"📚 <b>{title}</b>\n\n"
+              f"▶️ <a href=\"{video_url}\">YouTube Video देखें</a>\n\n"
+              "🤖 Meridian Academy Monitor"
+          )
+
+          url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+          response = requests.post(
+              url,
+              json={
+                  "chat_id": channel,
+                  "text": message,
+                  "parse_mode": "HTML"
+              },
+              timeout=20
+          )
+
+          response.raise_for_status()
+
+          result = response.json()
+
+          if not result.get("ok"):
+              raise SystemExit(
+                  f"❌ Telegram error: {result}"
+              )
+
+          print("✅ Telegram notification sent successfully")
+          PY
