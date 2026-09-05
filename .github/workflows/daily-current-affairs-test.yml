@@ -1,566 +1,67 @@
-name: Rajasthan Sources Test
+name: Meridian YouTube Test
 
 on:
   workflow_dispatch:
 
-concurrency:
-  group: rajasthan-current-affairs-test
-  cancel-in-progress: true
-
 jobs:
-  collect:
+  test-youtube:
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install packages
+      - name: Get latest Meridian Academy videos
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: |
-          pip install requests beautifulsoup4
-
-      - name: Collect Rajasthan Official Sources
-        shell: python
-        run: |
+          python - <<'PY'
+          import os
           import requests
-          from bs4 import BeautifulSoup
-          from datetime import datetime
-          from zoneinfo import ZoneInfo
-          from urllib.parse import urljoin
 
-          print("=" * 70)
-          print("RAJASTHAN CURRENT AFFAIRS COLLECTOR")
-          print("Today:", datetime.now(ZoneInfo("Asia/Kolkata")).date())
-          print("=" * 70)
+          key = os.environ["YOUTUBE_API_KEY"]
 
-          session = requests.Session()
-          session.headers.update({
-              "User-Agent": "Mozilla/5.0"
-          })
-
-          def fetch(url, method="get", **kwargs):
-              try:
-                  kwargs.setdefault("timeout", (5, 10))
-
-                  if method == "post":
-                      response = session.post(url, **kwargs)
-                  else:
-                      response = session.get(url, **kwargs)
-
-                  print(f"Status: {response.status_code} | {url}")
-                  return response
-
-              except Exception as e:
-                  print(f"ERROR: {url}")
-                  print("      ", e)
-                  return None
-
-
-          # ============================================================
-          # 1. DIPR
-          # ============================================================
-
-          print("\n📰 DIPR — RAJASTHAN")
-          print("-" * 70)
-
-          dipr_url = (
-              "https://dipr.rajasthan.gov.in/"
-              "webapi/api/OrderPortal/GetAll"
-          )
-
-          payload = {
-              "AdmDepartmentCode": 0,
-              "AttachmentList": [],
-              "BeneficiaryCategory": 0,
-              "Date": "",
-              "DepartmentCode": 85,
-              "DeptSectionCode": 0,
-              "EntryFromDate": "",
-              "EntryToDate": "",
-              "FromDate": "",
-              "Id": 0,
-              "IndexModel": {
-                  "AdvanceSearchModel": {},
-                  "PageSize": 50,
-                  "IsPostBack": False,
-                  "OrderByAsc": 0,
-                  "Search": None,
-                  "OrderBy": None
-              },
-              "IndividualBeneficiaryScheme": "",
-              "IsImagesRequired": True,
-              "IsLatest": -1,
-              "IsNotJankalyan": -1,
-              "OrderNo": "",
-              "SchemeCode": 0,
-              "Search": "",
-              "SectorIds": 0,
-              "Status": 1,
-              "SubTypeCode": "2583",
-              "Title": "",
-              "ToDate": "",
-              "Type": "10"
+          # Meridian Academy channel handle
+          url = "https://www.googleapis.com/youtube/v3/channels"
+          params = {
+              "part": "contentDetails,snippet",
+              "forHandle": "meridian.academy",
+              "key": key
           }
 
-          response = fetch(
-              dipr_url,
-              method="post",
-              json=payload,
-              headers={
-                  "Content-Type": "application/json"
-              }
-          )
-
-          if response:
-              try:
-                  data = response.json()
-
-                  def find_records(obj):
-                      if isinstance(obj, list):
-                          for item in obj:
-                              yield from find_records(item)
-
-                      elif isinstance(obj, dict):
-                          keys = {
-                              str(k).lower()
-                              for k in obj.keys()
-                          }
-
-                          if (
-                              ("title" in keys or "name" in keys)
-                              and
-                              ("id" in keys or "orderid" in keys)
-                          ):
-                              yield obj
-
-                          for value in obj.values():
-                              yield from find_records(value)
-
-                  records = list(find_records(data))
-
-                  seen = set()
-                  clean = []
-
-                  for item in records:
-
-                      title = str(
-                          item.get("Title")
-                          or item.get("title")
-                          or item.get("Name")
-                          or item.get("name")
-                          or ""
-                      ).strip()
-
-                      record_id = str(
-                          item.get("Id")
-                          or item.get("ID")
-                          or item.get("id")
-                          or item.get("OrderId")
-                          or item.get("orderId")
-                          or ""
-                      ).strip()
-
-                      date = str(
-                          item.get("Date")
-                          or item.get("date")
-                          or item.get("EntryDate")
-                          or ""
-                      ).strip()
-
-                      if not title:
-                          continue
-
-                      key = (
-                          title,
-                          record_id,
-                          date
-                      )
-
-                      if key not in seen:
-                          seen.add(key)
-                          clean.append(
-                              (title, date, record_id)
-                          )
-
-                  print(
-                      "DIPR records found:",
-                      len(clean)
-                  )
-
-                  for title, date, record_id in clean[:20]:
-                      print(f"\n📌 {title}")
-                      print(f"📅 {date}")
-                      print(f"📦 ID: {record_id}")
-
-              except Exception as e:
-                  print("DIPR ERROR:", e)
-
-
-          # ============================================================
-          # 2. FINANCE
-          # ============================================================
-
-          print("\n💰 FINANCE DEPARTMENT")
-          print("-" * 70)
-
-          finance_url = (
-              "https://finance.rajasthan.gov.in/"
-          )
-
-          response = fetch(finance_url)
-
-          if response:
-              soup = BeautifulSoup(
-                  response.text,
-                  "html.parser"
-              )
-
-              finance_results = []
-              seen = set()
-
-              # Look for links associated with recent news.
-              # Avoid permanent reference/document sections.
-
-              bad_terms = [
-                  "budget manual",
-                  "budget object codes",
-                  "rajasthan service rules",
-                  "rsr rules",
-                  "treasury rules",
-                  "hra rules",
-                  "provident fund",
-                  "excise act",
-                  "transparency in public procurement",
-                  "pay scales",
-                  "pension rules",
-                  "travelling allowance",
-                  "general provident",
-                  "skip to main content"
-              ]
-
-              good_terms = [
-                  "amendment",
-                  "cag report",
-                  "report",
-                  "guideline",
-                  "notification",
-                  "order",
-                  "rips",
-                  "holiday",
-                  "rule"
-              ]
-
-              for a in soup.find_all(
-                  "a",
-                  href=True
-              ):
-
-                  title = " ".join(
-                      a.get_text(
-                          " ",
-                          strip=True
-                      ).split()
-                  )
-
-                  if not title:
-                      continue
-
-                  href = urljoin(
-                      finance_url,
-                      a["href"]
-                  )
-
-                  low = title.lower()
-
-                  if href.lower().startswith(
-                      "javascript:"
-                  ):
-                      continue
-
-                  if any(
-                      term in low
-                      for term in bad_terms
-                  ):
-                      continue
-
-                  if not any(
-                      term in low
-                      for term in good_terms
-                  ):
-                      continue
-
-                  key = (
-                      title,
-                      href
-                  )
-
-                  if key not in seen:
-                      seen.add(key)
-                      finance_results.append(
-                          (title, href)
-                      )
-
-              print(
-                  "Finance candidates:",
-                  len(finance_results)
-              )
-
-              for title, href in finance_results[:15]:
-                  print(f"\n📌 {title}")
-                  print(f"🔗 {href}")
-
-
-          # ============================================================
-          # 3. RSSC SPORTS
-          # ============================================================
-
-          print("\n🏆 SPORTS — RSSC")
-          print("-" * 70)
-
-          rssc_url = (
-              "https://rssc.rajasthan.gov.in/"
-              "content/raj/sports/"
-              "rajasthan-state-sports-council/"
-              "en/home.html"
-          )
-
-          response = fetch(rssc_url)
-
-          if response:
-              soup = BeautifulSoup(
-                  response.text,
-                  "html.parser"
-              )
-
-              sports_results = []
-              seen = set()
-
-              # Sports event terminology.
-              event_terms = [
-                  "championship",
-                  "league",
-                  "tournament",
-                  "ranking",
-                  "hockey",
-                  "football",
-                  "cricket",
-                  "badminton",
-                  "athletics",
-                  "sports event",
-                  "probables",
-                  "seminar"
-              ]
-
-              # Remove permanent infrastructure/navigation pages.
-              bad_terms = [
-                  "district sports office",
-                  "district sports centre",
-                  "state sports centre",
-                  "sports centres",
-                  "sports centre"
-              ]
-
-              for a in soup.find_all(
-                  "a",
-                  href=True
-              ):
-
-                  title = " ".join(
-                      a.get_text(
-                          " ",
-                          strip=True
-                      ).split()
-                  )
-
-                  if not title:
-                      continue
-
-                  low = title.lower()
-
-                  if not any(
-                      term in low
-                      for term in event_terms
-                  ):
-                      continue
-
-                  if any(
-                      term in low
-                      for term in bad_terms
-                  ):
-                      continue
-
-                  href = urljoin(
-                      rssc_url,
-                      a["href"]
-                  )
-
-                  key = (
-                      title,
-                      href
-                  )
-
-                  if key not in seen:
-                      seen.add(key)
-                      sports_results.append(
-                          (title, href)
-                      )
-
-              print(
-                  "Sports event candidates:",
-                  len(sports_results)
-              )
-
-              for title, href in sports_results[:25]:
-                  print(f"\n📌 {title}")
-                  print(f"🔗 {href}")
-
-
-          # ============================================================
-          # 4. DST — SCIENCE & TECHNOLOGY
-          # ============================================================
-
-          print("\n🔬 SCIENCE & TECHNOLOGY — DST")
-          print("-" * 70)
-
-          dst_url = (
-              "https://dst.rajasthan.gov.in/news.aspx"
-          )
-
-          response = fetch(dst_url)
-
-          if response:
-              soup = BeautifulSoup(
-                  response.text,
-                  "html.parser"
-              )
-
-              dst_results = []
-              seen = set()
-
-              bad_terms = [
-                  "corrigendum",
-                  "tender",
-                  "auction",
-                  "quotation",
-                  "bid document",
-                  "नीलामी",
-                  "निविदा",
-                  "अनुपयोगी",
-                  "नकारा सामग्री"
-              ]
-
-              science_terms = [
-                  "science",
-                  "technology",
-                  "innovation",
-                  "innovator",
-                  "research",
-                  "scientific",
-                  "science club",
-                  "karya",
-                  "विज्ञान",
-                  "प्रौद्योगिकी",
-                  "नवाचार",
-                  "अनुसंधान"
-              ]
-
-              for table in soup.find_all(
-                  "table"
-              ):
-
-                  for row in table.find_all(
-                      "tr"
-                  ):
-
-                      cells = row.find_all(
-                          ["td", "th"]
-                      )
-
-                      if not cells:
-                          continue
-
-                      values = []
-
-                      for cell in cells:
-                          value = " ".join(
-                              cell.get_text(
-                                  " ",
-                                  strip=True
-                              ).split()
-                          )
-
-                          if value:
-                              values.append(value)
-
-                      if not values:
-                          continue
-
-                      row_text = " | ".join(
-                          values
-                      )
-
-                      low = row_text.lower()
-
-                      if any(
-                          term in low
-                          for term in bad_terms
-                      ):
-                          continue
-
-                      # Keep science/technology/innovation
-                      # related entries.
-                      if not any(
-                          term in low
-                          for term in science_terms
-                      ):
-                          continue
-
-                      href = ""
-
-                      link = row.find(
-                          "a",
-                          href=True
-                      )
-
-                      if link:
-                          href = urljoin(
-                              dst_url,
-                              link["href"]
-                          )
-
-                      key = (
-                          row_text,
-                          href
-                      )
-
-                      if key not in seen:
-                          seen.add(key)
-                          dst_results.append(
-                              (row_text, href)
-                          )
-
-              print(
-                  "DST candidates:",
-                  len(dst_results)
-              )
-
-              for title, href in dst_results[:20]:
-                  print(f"\n📌 {title}")
-
-                  if href:
-                      print(f"🔗 {href}")
-
-
-          # ============================================================
-          # FINISHED
-          # ============================================================
-
-          print("\n" + "=" * 70)
-          print("SOURCE COLLECTION FINISHED")
-          print("=" * 70)
+          r = requests.get(url, params=params, timeout=20)
+          r.raise_for_status()
+          data = r.json()
+
+          if not data.get("items"):
+              raise SystemExit("Meridian Academy channel नहीं मिला")
+
+          channel = data["items"][0]
+          channel_id = channel["id"]
+          uploads_playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+
+          print("CHANNEL:", channel["snippet"]["title"])
+          print("CHANNEL ID:", channel_id)
+          print("UPLOADS PLAYLIST:", uploads_playlist)
+          print("\nLATEST VIDEOS:\n")
+
+          url = "https://www.googleapis.com/youtube/v3/playlistItems"
+          params = {
+              "part": "snippet,contentDetails",
+              "playlistId": uploads_playlist,
+              "maxResults": 10,
+              "key": key
+          }
+
+          r = requests.get(url, params=params, timeout=20)
+          r.raise_for_status()
+          data = r.json()
+
+          for i, item in enumerate(data.get("items", []), 1):
+              snippet = item["snippet"]
+              video_id = item["contentDetails"]["videoId"]
+
+              print(f"{i}. {snippet['title']}")
+              print(f"   Published: {snippet['publishedAt']}")
+              print(f"   URL: https://www.youtube.com/watch?v={video_id}")
+              print()
+
+          PY
