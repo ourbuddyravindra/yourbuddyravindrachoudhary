@@ -108,15 +108,11 @@ jobs:
 
           print("API response received")
 
-          # --------------------------------------------
-          # Recursively inspect API response
-          # --------------------------------------------
           def walk(obj):
               if isinstance(obj, dict):
                   yield obj
                   for value in obj.values():
                       yield from walk(value)
-
               elif isinstance(obj, list):
                   for value in obj:
                       yield from walk(value)
@@ -124,7 +120,6 @@ jobs:
           sujas = []
 
           for item in walk(data):
-
               if not isinstance(item, dict):
                   continue
 
@@ -135,22 +130,13 @@ jobs:
               if "सुजस" not in title:
                   continue
 
-              attachments = item.get(
-                  "AttachmentList"
-              )
+              attachments = item.get("AttachmentList")
 
-              if not isinstance(
-                  attachments,
-                  list
-              ):
+              if not isinstance(attachments, list):
                   continue
 
               for attachment in attachments:
-
-                  if not isinstance(
-                      attachment,
-                      dict
-                  ):
+                  if not isinstance(attachment, dict):
                       continue
 
                   path = (
@@ -166,54 +152,34 @@ jobs:
                       "title": title,
                       "date": item.get("Date"),
                       "path": path,
-                      "attachment_name":
-                          attachment.get(
-                              "AttachmentsName"
-                          )
+                      "attachment_name": attachment.get(
+                          "AttachmentsName"
+                      )
                   })
 
-          print(
-              "Sujas candidates:",
-              len(sujas)
-          )
+          print("Sujas candidates:", len(sujas))
 
           if not sujas:
               print("ERROR: Sujas PDF not found")
               sys.exit(1)
 
-          # --------------------------------------------
-          # Newest Sujas
-          # --------------------------------------------
           def sort_key(item):
-
-              date_value = str(
-                  item.get("date") or ""
-              )
+              date_value = str(item.get("date") or "")
 
               try:
                   parsed = datetime.fromisoformat(
-                      date_value.replace(
-                          "Z",
-                          "+00:00"
-                      )
+                      date_value.replace("Z", "+00:00")
                   )
-
                   timestamp = parsed.timestamp()
-
               except Exception:
                   timestamp = 0
 
               try:
-                  item_id = int(
-                      item.get("id") or 0
-                  )
+                  item_id = int(item.get("id") or 0)
               except Exception:
                   item_id = 0
 
-              return (
-                  timestamp,
-                  item_id
-              )
+              return timestamp, item_id
 
           sujas.sort(
               key=sort_key,
@@ -226,9 +192,6 @@ jobs:
               selected["path"]
           ).strip()
 
-          # --------------------------------------------
-          # Extract URL from Markdown if required
-          # --------------------------------------------
           match = re.search(
               r"\]\((https?://[^)]+)\)",
               pdf_url
@@ -237,14 +200,8 @@ jobs:
           if match:
               pdf_url = match.group(1)
 
-          if not pdf_url.startswith(
-              "http://"
-          ) and not pdf_url.startswith(
-              "https://"
-          ):
-              print(
-                  "ERROR: Invalid PDF URL:"
-              )
+          if not pdf_url.startswith("http://") and not pdf_url.startswith("https://"):
+              print("ERROR: Invalid PDF URL:")
               print(pdf_url)
               sys.exit(1)
 
@@ -263,9 +220,6 @@ jobs:
               )
           )
 
-          # --------------------------------------------
-          # Download PDF
-          # --------------------------------------------
           print()
           print("Downloading PDF...")
 
@@ -273,8 +227,7 @@ jobs:
               pdf_url,
               timeout=180,
               headers={
-                  "User-Agent":
-                      "Mozilla/5.0"
+                  "User-Agent": "Mozilla/5.0"
               }
           )
 
@@ -282,24 +235,13 @@ jobs:
 
           content = pdf_response.content
 
-          print(
-              "Downloaded bytes:",
-              len(content)
-          )
+          print("Downloaded bytes:", len(content))
 
-          if not content.startswith(
-              b"%PDF"
-          ):
-              print(
-                  "ERROR: Downloaded file "
-                  "is not a PDF"
-              )
+          if not content.startswith(b"%PDF"):
+              print("ERROR: Downloaded file is not a PDF")
               sys.exit(1)
 
-          with open(
-              "sujas_today.pdf",
-              "wb"
-          ) as f:
+          with open("sujas_today.pdf", "wb") as f:
               f.write(content)
 
           with open(
@@ -315,9 +257,7 @@ jobs:
               )
 
           print()
-          print(
-              "SUCCESS: Sujas PDF downloaded"
-          )
+          print("SUCCESS: Sujas PDF downloaded")
           PY
 
       # ============================================
@@ -352,14 +292,11 @@ jobs:
           )
 
           if not images:
-              raise RuntimeError(
-                  "No page images found"
-              )
+              raise RuntimeError("No page images found")
 
           results = []
 
           for image in images:
-
               try:
                   page_number = int(
                       image.stem.split("-")[-1]
@@ -367,9 +304,7 @@ jobs:
               except Exception:
                   continue
 
-              print(
-                  f"OCR page {page_number}..."
-              )
+              print(f"OCR page {page_number}...")
 
               result = subprocess.run(
                   [
@@ -412,14 +347,8 @@ jobs:
               )
 
           print()
-          print(
-              "OCR completed."
-          )
-
-          print(
-              "Total pages:",
-              len(results)
-          )
+          print("OCR completed.")
+          print("Total pages:", len(results))
           PY
 
       # ============================================
@@ -448,9 +377,6 @@ jobs:
               api_key=API_KEY
           )
 
-          # ------------------------------------------
-          # JSON schema
-          # ------------------------------------------
           schema = {
               "type": "object",
               "properties": {
@@ -502,16 +428,12 @@ jobs:
               )
 
               text = str(
-                  page_data.get(
-                      "text",
-                      ""
-                  )
+                  page_data.get("text", "")
               ).strip()
 
               if not text:
                   print(
-                      f"Page {page_number}: "
-                      "empty OCR"
+                      f"Page {page_number}: empty OCR"
                   )
                   continue
 
@@ -535,7 +457,7 @@ exam-oriented FACTS निकालने हैं।
 1. केवल दिए गए OCR text पर आधारित रहो।
 2. अपनी तरफ से कोई तथ्य मत जोड़ो।
 3. इंटरनेट या अपनी सामान्य जानकारी का उपयोग मत करो।
-4. यदि OCR में कोई नाम/संख्या/शब्द अस्पष्ट है,
+4. यदि OCR में कोई नाम, संख्या या शब्द अस्पष्ट है,
    तो अनुमान मत लगाओ।
 5. हर fact का page {page_number} ही होना चाहिए।
 6. हर fact के साथ source evidence देना अनिवार्य है।
@@ -573,9 +495,13 @@ exam-oriented FACTS निकालने हैं।
 - महत्वपूर्ण तिथियाँ
 
 हर fact में:
+
 fact = साफ exam-oriented तथ्य
+
 category = उपयुक्त category
+
 page = {page_number}
+
 evidence = source में मौजूद छोटा supporting text
 
 PAGE {page_number} OCR:
@@ -649,9 +575,6 @@ PAGE {page_number} OCR:
                           except Exception:
                               page = page_number
 
-                          # --------------------------------
-                          # Basic validation
-                          # --------------------------------
                           if not fact:
                               continue
 
@@ -673,9 +596,7 @@ PAGE {page_number} OCR:
                           f"{len(valid)} facts"
                       )
 
-                      all_facts.extend(
-                          valid
-                      )
+                      all_facts.extend(valid)
 
                       success = True
                       break
@@ -700,9 +621,9 @@ PAGE {page_number} OCR:
                       "Gemini failed after retries"
                   )
 
-          # ------------------------------------------
+          # ==========================================
           # Remove duplicate facts
-          # ------------------------------------------
+          # ==========================================
           unique = []
           seen = set()
 
@@ -770,6 +691,7 @@ PAGE {page_number} OCR:
                   f"   Evidence: "
                   f"{item['evidence']}"
               )
+
           PY
 
       # ============================================
