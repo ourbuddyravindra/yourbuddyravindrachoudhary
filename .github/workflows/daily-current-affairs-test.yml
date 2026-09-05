@@ -10,15 +10,34 @@ jobs:
 
     steps:
 
-      - name: Install tools
+      # =========================================================
+      # 1. INSTALL OCR TOOLS
+      # =========================================================
+      - name: Install OCR tools
         run: |
-          python -m pip install requests pypdf
+          sudo apt-get update
+          sudo apt-get install -y \
+            poppler-utils \
+            tesseract-ocr \
+            tesseract-ocr-hin \
+            tesseract-ocr-eng
 
+          python -m pip install --upgrade pip
+          pip install requests
+
+          echo "Tesseract:"
+          tesseract --version
+
+          echo "Languages:"
+          tesseract --list-langs
+
+      # =========================================================
+      # 2. DOWNLOAD LATEST SUJAS PDF
+      # =========================================================
       - name: Download latest Sujas PDF
         run: |
           python - <<'PY'
           import requests
-          import json
           from pathlib import Path
 
           API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
@@ -67,14 +86,18 @@ jobs:
                   return obj
 
               if isinstance(obj, dict):
-                  for key in ["Data","data","Result","result","Items","items"]:
+                  for key in [
+                      "Data", "data",
+                      "Result", "result",
+                      "Items", "items"
+                  ]:
                       if key in obj and isinstance(obj[key], list):
                           return obj[key]
 
                   for value in obj.values():
-                      result = find_records(value)
-                      if result:
-                          return result
+                      found = find_records(value)
+                      if found:
+                          return found
 
               return []
 
@@ -110,67 +133,79 @@ jobs:
           if not pdf_url:
               raise SystemExit("PDF URL नहीं मिला")
 
-          print("PDF URL:", pdf_url)
-
           pdf = requests.get(pdf_url, timeout=90)
           pdf.raise_for_status()
 
           Path("sujas_today.pdf").write_bytes(pdf.content)
 
           print("PDF SIZE:", len(pdf.content))
-
-          if len(pdf.content) < 100000:
-              raise SystemExit("PDF बहुत छोटी है")
-
           print("DOWNLOAD SUCCESS")
+
           PY
 
-      - name: Extract PDF text
+      # =========================================================
+      # 3. PDF -> HIGH QUALITY IMAGES
+      # =========================================================
+      - name: Convert PDF to images
         run: |
-          python - <<'PY'
-          from pypdf import PdfReader
-          from pathlib import Path
+          mkdir -p pages
 
-          print("Opening PDF...")
+          pdftoppm \
+            -jpeg \
+            -r 250 \
+            -jpegopt quality=95 \
+            sujas_today.pdf \
+            pages/page
 
-          reader = PdfReader("sujas_today.pdf")
+          echo "Generated pages:"
+          ls -lh pages/
 
-          print("PAGES:", len(reader.pages))
+          echo "TOTAL IMAGES:"
+          find pages -type f | wc -l
 
-          parts = []
+      # =========================================================
+      # 4. HINDI OCR
+      # =========================================================
+      - name: Hindi OCR
+        run: |
+          rm -f sujas_ocr.txt
 
-          for number, page in enumerate(reader.pages, 1):
+          for image in pages/page-*.jpg
+          do
+            echo ""
+            echo "======================================"
+            echo "OCR:"
+            echo "$image"
+            echo "======================================"
 
-              print("Reading page:", number)
+            tesseract "$image" stdout \
+              -l hin+eng \
+              --psm 3 \
+              2>/dev/null >> sujas_ocr.txt
 
-              try:
-                  text = page.extract_text() or ""
-              except Exception as e:
-                  print("PAGE ERROR:", number, str(e))
-                  text = ""
+            echo "" >> sujas_ocr.txt
+            echo "--- PAGE END ---" >> sujas_ocr.txt
+            echo "" >> sujas_ocr.txt
+          done
 
-              parts.append(
-                  f"\n--- PAGE {number} ---\n{text}"
-              )
+          echo ""
+          echo "======================================"
+          echo "OCR COMPLETE"
+          echo "======================================"
 
-          final_text = "\n".join(parts)
+          echo "TEXT CHARACTERS:"
+          wc -m sujas_ocr.txt
 
-          Path("sujas_text.txt").write_text(
-              final_text,
-              encoding="utf-8"
-          )
+          echo ""
+          echo "========== OCR PREVIEW =========="
+          head -c 15000 sujas_ocr.txt
+          echo ""
+          echo "================================="
 
-          print("TEXT CHARACTERS:", len(final_text))
-
-          if len(final_text.strip()) < 500:
-              print("WARNING: PDF शायद scanned/image based है")
-
-          print("\n========== TEXT PREVIEW ==========\n")
-          print(final_text[:8000])
-          print("\n===================================\n")
-          PY
-
-      - name: Gemini test
+      # =========================================================
+      # 5. GEMINI
+      # =========================================================
+      - name: Process OCR with Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -182,34 +217,59 @@ jobs:
 
           key = os.environ["GEMINI_API_KEY"]
 
-          text = Path("sujas_text.txt").read_text(
-              encoding="utf-8"
+          text = Path("sujas_ocr.txt").read_text(
+              encoding="utf-8",
+              errors="ignore"
           )
 
-          print("SOURCE TEXT LENGTH:", len(text))
+          print("OCR TEXT LENGTH:", len(text))
 
-          # अभी सिर्फ छोटा sample Gemini को भेजेंगे
-          sample = text[:12000]
+          if len(text.strip()) < 1000:
+              raise SystemExit(
+                  "OCR text बहुत कम है — OCR quality check करनी होगी."
+              )
+
+          # अभी test के लिए 30000 characters
+          source = text[:30000]
 
           prompt = f"""
-          नीचे SUJAS e-Bulletin से निकाला गया वास्तविक text है।
+          तुम RPSC और RSSB के लिए Current Affairs editor हो।
 
-          इसमें से केवल 5 महत्वपूर्ण current affairs निकालो।
+          नीचे राजस्थान सरकार के DIPR द्वारा प्रकाशित
+          SUJAS e-Bulletin का OCR किया हुआ वास्तविक text है।
 
-          कोई जानकारी अपनी तरफ से मत बनाओ।
+          केवल इसी source से महत्वपूर्ण current affairs निकालो।
 
-          प्रत्येक में:
-          1. शीर्षक
-          2. तथ्य
-          3. एक MCQ
-          4. चार विकल्प
-          5. सही उत्तर
+          IMPORTANT:
+          - कोई fact invent मत करो।
+          - अगर OCR में कोई नाम/संख्या स्पष्ट नहीं है तो उसे मत लो।
+          - पुराने/general facts मत बनाओ।
+          - केवल source में मौजूद वर्तमान घटनाओं को लो।
+          - राजस्थान से संबंधित सभी महत्वपूर्ण exam-worthy घटनाओं
+            को प्राथमिकता दो।
+          - योजनाएं, नियुक्तियां, पुरस्कार, व्यक्ति, खेल,
+            अर्थव्यवस्था, कृषि, शिक्षा, स्वास्थ्य, पर्यावरण,
+            उद्योग, निवेश, infrastructure, reports, science-tech,
+            AI/digital आदि शामिल करो।
+          - महत्वपूर्ण national/science-tech information भी लो
+            अगर source में स्पष्ट रूप से मौजूद हो।
 
-          भाषा सरल हिंदी हो।
+          प्रत्येक item इस format में दो:
+
+          शीर्षक:
+          तथ्य:
+          प्रश्न:
+          (A)
+          (B)
+          (C)
+          (D)
+          सही उत्तर:
+
+          कम से कम 10 अच्छे और वास्तविक items निकालने की कोशिश करो।
+          बेकार information को शामिल मत करो।
 
           SOURCE:
-
-          {sample}
+          {source}
           """
 
           models = [
@@ -221,13 +281,15 @@ jobs:
 
           for model in models:
 
-              print("\nMODEL:", model)
+              print("")
+              print("================================")
+              print("MODEL:", model)
+              print("================================")
 
               url = (
                   "https://generativelanguage.googleapis.com/"
                   "v1beta/models/"
-                  + model +
-                  ":generateContent"
+                  f"{model}:generateContent"
               )
 
               payload = {
@@ -248,8 +310,7 @@ jobs:
               for attempt in range(3):
 
                   print(
-                      "ATTEMPT:",
-                      attempt + 1
+                      f"ATTEMPT {attempt + 1}/3"
                   )
 
                   try:
@@ -258,11 +319,11 @@ jobs:
                           url,
                           params={"key": key},
                           json=payload,
-                          timeout=60
+                          timeout=90
                       )
 
                       print(
-                          "STATUS:",
+                          "HTTP STATUS:",
                           response.status_code
                       )
 
@@ -275,20 +336,17 @@ jobs:
                               ["content"]["parts"][0]["text"]
                           )
 
-                          print(
-                              "\n========== GEMINI ==========\n"
-                          )
-
+                          print("")
+                          print("========== FINAL GEMINI RESULT ==========")
                           print(output)
-
-                          print(
-                              "\n=============================\n"
-                          )
+                          print("==========================================")
 
                           success = True
                           break
 
-                      print(response.text[:2000])
+                      print(
+                          response.text[:1500]
+                      )
 
                       if response.status_code in [
                           429, 500, 502, 503, 504
@@ -296,9 +354,8 @@ jobs:
                           wait = 10 * (attempt + 1)
 
                           print(
-                              "Waiting",
-                              wait,
-                              "seconds..."
+                              "Temporary error."
+                              f" Waiting {wait}s..."
                           )
 
                           time.sleep(wait)
@@ -317,15 +374,13 @@ jobs:
                           time.sleep(10)
 
               if success:
-                  print(
-                      "SUCCESS MODEL:",
-                      model
-                  )
+                  print("")
+                  print("SUCCESS MODEL:", model)
                   break
 
           if not success:
               raise SystemExit(
-                  "Gemini सभी attempts में failed"
+                  "Gemini failed with all available models."
               )
 
           PY
