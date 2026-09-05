@@ -1,0 +1,30 @@
+name: Gemini AI Test
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install Gemini SDK
+        run: pip install -U google-genai
+
+      - name: Test Gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          from google import genai
+          import os
+
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+
+          response = client.models.generate_content(
+              model="gemini-3.8-flash",
+              contents="राजस्थान प्रतियोगी परीक्षाओं के लिए एक महत्वपूर्ण सामान्य ज्ञान तथ्य हिंदी में बताओ।"
+          )
+
+          print(response.text)
+          PY
