@@ -6,7 +6,7 @@ on:
 jobs:
   dipr-ai:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Install tools
@@ -62,18 +62,20 @@ jobs:
 
           data = r.json()
 
-          # API response structure संभालने के लिए recursive search
           def find_records(obj):
               if isinstance(obj, list):
                   return obj
+
               if isinstance(obj, dict):
                   for key in ["Data", "data", "Result", "result", "Items", "items"]:
                       if key in obj and isinstance(obj[key], list):
                           return obj[key]
+
                   for value in obj.values():
                       found = find_records(value)
                       if found:
                           return found
+
               return []
 
           records = find_records(data)
@@ -98,7 +100,6 @@ jobs:
           print("\nSELECTED RECORD:")
           print(json.dumps(selected, ensure_ascii=False, indent=2))
 
-          # सभी string values में PDF URL खोजें
           def find_pdf_urls(obj):
               urls = []
 
@@ -107,19 +108,19 @@ jobs:
                       urls.append(obj)
 
               elif isinstance(obj, dict):
-                  for v in obj.values():
-                      urls.extend(find_pdf_urls(v))
+                  for value in obj.values():
+                      urls.extend(find_pdf_urls(value))
 
               elif isinstance(obj, list):
-                  for v in obj:
-                      urls.extend(find_pdf_urls(v))
+                  for value in obj:
+                      urls.extend(find_pdf_urls(value))
 
               return urls
 
           pdf_urls = find_pdf_urls(selected)
 
           if not pdf_urls:
-              raise SystemExit("Selected record में PDF URL नहीं मिला")
+              raise SystemExit("PDF URL नहीं मिला")
 
           pdf_url = pdf_urls[0]
 
@@ -149,7 +150,10 @@ jobs:
               page_text = page.extract_text() or ""
               text += f"\n\n--- PAGE {page_no} ---\n{page_text}"
 
-          Path("sujas_text.txt").write_text(text, encoding="utf-8")
+          Path("sujas_text.txt").write_text(
+              text,
+              encoding="utf-8"
+          )
 
           print("TEXT CHARACTERS:", len(text))
 
@@ -158,30 +162,39 @@ jobs:
           print("\n===================================\n")
           PY
 
-      - name: Gemini processing
+      - name: Process with Gemini
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python - <<'PY'
           import os
           import json
+          import time
+          import random
           import requests
           from pathlib import Path
 
-          text = Path("sujas_text.txt").read_text(encoding="utf-8")
+          text = Path("sujas_text.txt").read_text(
+              encoding="utf-8"
+          )
 
-          # बहुत बड़ा PDF होने पर अभी पहला 60k chars test करेंगे
+          # अभी testing के लिए limit
           text = text[:60000]
 
           prompt = f"""
-          तुम RPSC/RSSB के लिए Current Affairs Editor हो।
+          तुम RPSC और RSSB के लिए Current Affairs Editor हो।
 
-          नीचे राजस्थान सरकार के DIPR द्वारा जारी SUJAS e-Bulletin का text है।
+          नीचे राजस्थान सरकार के DIPR द्वारा जारी SUJAS
+          e-Bulletin का वास्तविक text दिया गया है।
 
-          केवल source में मौजूद वास्तविक facts का उपयोग करो।
-          कोई fact, नाम, तारीख, संख्या या पद अपनी तरफ से मत बनाओ।
+          IMPORTANT RULES:
 
-          Source के महत्वपूर्ण exam-oriented current affairs निकालो।
+          1. केवल source में मौजूद facts का उपयोग करो।
+          2. कोई नाम, तारीख, संख्या, पद या घटना अपनी तरफ से मत बनाओ।
+          3. महत्वपूर्ण exam-oriented facts निकालो।
+          4. एक ही fact को दोहराओ मत।
+          5. प्रश्न और answer source के fact पर आधारित होने चाहिए।
+          6. अगर कोई जानकारी अस्पष्ट है तो उसे छोड़ दो।
 
           Categories:
           - राजस्थान नियुक्तियां
@@ -209,9 +222,12 @@ jobs:
           4 options
           correct answer
 
+          भाषा: सरल और स्पष्ट हिंदी।
+          स्तर: RPSC/RSSB.
+
           Output केवल valid JSON में दो।
 
-          SOURCE:
+          SOURCE TEXT:
           {text}
           """
 
@@ -223,15 +239,27 @@ jobs:
                       "items": {
                           "type": "object",
                           "properties": {
-                              "title": {"type": "string"},
-                              "category": {"type": "string"},
-                              "fact": {"type": "string"},
-                              "question": {"type": "string"},
+                              "title": {
+                                  "type": "string"
+                              },
+                              "category": {
+                                  "type": "string"
+                              },
+                              "fact": {
+                                  "type": "string"
+                              },
+                              "question": {
+                                  "type": "string"
+                              },
                               "options": {
                                   "type": "array",
-                                  "items": {"type": "string"}
+                                  "items": {
+                                      "type": "string"
+                                  }
                               },
-                              "answer": {"type": "string"}
+                              "answer": {
+                                  "type": "string"
+                              }
                           },
                           "required": [
                               "title",
@@ -252,44 +280,131 @@ jobs:
               "models/gemini-3.5-flash:generateContent"
           )
 
-          response = requests.post(
-              url,
-              headers={
-                  "x-goog-api-key": os.environ["GEMINI_API_KEY"],
-                  "Content-Type": "application/json"
-              },
-              json={
-                  "contents": [
-                      {
-                          "parts": [
-                              {"text": prompt}
-                          ]
-                      }
-                  ],
-                  "generationConfig": {
-                      "temperature": 0.1,
-                      "responseMimeType": "application/json",
-                      "responseJsonSchema": schema
+          payload = {
+              "contents": [
+                  {
+                      "parts": [
+                          {
+                              "text": prompt
+                          }
+                      ]
                   }
-              },
-              timeout=120
-          )
+              ],
+              "generationConfig": {
+                  "temperature": 0.1,
+                  "responseMimeType": "application/json",
+                  "responseJsonSchema": schema
+              }
+          }
 
-          print("GEMINI STATUS:", response.status_code)
+          headers = {
+              "x-goog-api-key": os.environ["GEMINI_API_KEY"],
+              "Content-Type": "application/json"
+          }
 
-          if response.status_code != 200:
-              print(response.text)
-              raise SystemExit(1)
+          max_retries = 6
+          response = None
+
+          for attempt in range(max_retries):
+
+              print(
+                  f"\nGemini attempt "
+                  f"{attempt + 1}/{max_retries}"
+              )
+
+              try:
+                  response = requests.post(
+                      url,
+                      headers=headers,
+                      json=payload,
+                      timeout=120
+                  )
+
+                  print(
+                      "HTTP STATUS:",
+                      response.status_code
+                  )
+
+                  if response.status_code == 200:
+                      break
+
+                  if response.status_code in (
+                      429, 500, 502, 503, 504
+                  ):
+                      if attempt < max_retries - 1:
+
+                          base_delay = min(
+                              60,
+                              5 * (2 ** attempt)
+                          )
+
+                          jitter = random.uniform(0, 3)
+
+                          wait = base_delay + jitter
+
+                          print(
+                              f"Temporary Gemini error. "
+                              f"Retrying in {wait:.1f} seconds..."
+                          )
+
+                          time.sleep(wait)
+                          continue
+
+                  print(response.text)
+                  raise SystemExit(
+                      "Gemini request failed"
+                  )
+
+              except requests.RequestException as e:
+
+                  print(
+                      "REQUEST ERROR:",
+                      str(e)
+                  )
+
+                  if attempt < max_retries - 1:
+
+                      wait = min(
+                          60,
+                          5 * (2 ** attempt)
+                      )
+
+                      print(
+                          f"Retrying in {wait} seconds..."
+                      )
+
+                      time.sleep(wait)
+
+                  else:
+                      raise
+
+          if response is None or response.status_code != 200:
+              raise SystemExit(
+                  "Gemini failed after all retries"
+              )
 
           result = response.json()
 
-          output = result["candidates"][0]["content"]["parts"][0]["text"]
+          output = (
+              result["candidates"][0]
+              ["content"]["parts"][0]["text"]
+          )
 
-          print("\n========== GEMINI RESULT ==========\n")
+          print(
+              "\n========== GEMINI RESULT ==========\n"
+          )
+
           print(output)
-          print("\n===================================\n")
+
+          print(
+              "\n===================================\n"
+          )
 
           parsed = json.loads(output)
 
-          print("TOTAL CURRENT AFFAIRS:", len(parsed["items"]))
+          print(
+              "TOTAL CURRENT AFFAIRS:",
+              len(parsed.get("items", []))
+          )
+
           PY
