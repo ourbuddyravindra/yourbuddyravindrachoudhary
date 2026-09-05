@@ -1,40 +1,30 @@
- name: Rajasthan Sujas Auto Upload
+name: Rajasthan Sujas Auto Upload
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '17 21,22,23 * * *'
-      timezone: "Asia/Kolkata"
+      timezone: 'Asia/Kolkata'
     - cron: '17 0 * * *'
-      timezone: "Asia/Kolkata"
-
-  workflow_dispatch:
-
-concurrency:
-  group: sujas-auto
-  cancel-in-progress: false
-
-permissions:
-  contents: write
+      timezone: 'Asia/Kolkata'
 
 jobs:
   sujas:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Repository checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
+          python-version: '3.12'
 
       - name: Install requests
         run: pip install requests
 
-      - name: Check and upload latest Sujas
+      - name: Check and upload Sujas
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
@@ -42,13 +32,9 @@ jobs:
           import os
           import requests
           import re
-          from datetime import datetime
 
-          BOT_TOKEN = os.environ.get("BOT_TOKEN")
+          BOT_TOKEN = os.environ["BOT_TOKEN"]
           CHANNEL = "@yourbuddyravindrachoudhary"
-
-          if not BOT_TOKEN:
-              raise Exception("BOT_TOKEN GitHub Secret नहीं मिला")
 
           API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
 
@@ -86,79 +72,31 @@ jobs:
               "Type": "10"
           }
 
-          print("🔎 Rajasthan DIPR se latest Sujas check ho raha hai...")
+          print("🔎 Sujas check ho raha hai...")
 
-          response = requests.post(
-              API,
-              json=payload,
-              timeout=60
-          )
-
-          response.raise_for_status()
-
-          data = response.json()
-
-          def get_value(obj, *keys):
-              if not isinstance(obj, dict):
-                  return None
-
-              for key in keys:
-                  if key in obj and obj[key] not in (None, ""):
-                      return obj[key]
-
-              lower_map = {
-                  str(k).lower(): v
-                  for k, v in obj.items()
-              }
-
-              for key in keys:
-                  value = lower_map.get(key.lower())
-                  if value not in (None, ""):
-                      return value
-
-              return None
+          r = requests.post(API, json=payload, timeout=60)
+          r.raise_for_status()
+          data = r.json()
 
           def find_pdf(obj):
-              """
-              पूरे response के अंदर recursively PDF URL खोजता है।
-              """
               if isinstance(obj, dict):
-                  for key, value in obj.items():
-
+                  for value in obj.values():
                       if isinstance(value, str):
-                          text = value.strip()
-
-                          if ".pdf" in text.lower():
-                              match = re.search(
-                                  r'https?://[^\s"\']+\.pdf(?:\?[^\s"\']*)?',
-                                  text,
-                                  re.IGNORECASE
-                              )
-
-                              if match:
-                                  return match.group(0)
-
-                              if text.lower().startswith(("http://", "https://")):
-                                  return text
-
+                          if ".pdf" in value.lower() and value.startswith("http"):
+                              return value
                       result = find_pdf(value)
-
                       if result:
                           return result
 
               elif isinstance(obj, list):
                   for item in obj:
                       result = find_pdf(item)
-
                       if result:
                           return result
 
               return None
 
           def find_records(obj):
-              """
-              Response के अंदर possible records recursively ढूंढता है।
-              """
               records = []
 
               if isinstance(obj, list):
@@ -168,190 +106,50 @@ jobs:
                       records.extend(find_records(item))
 
               elif isinstance(obj, dict):
-                  for key, value in obj.items():
-
-                      if isinstance(value, list):
-                          for item in value:
-                              if isinstance(item, dict):
-                                  records.append(item)
-
-                          records.extend(find_records(value))
-
-                      elif isinstance(value, dict):
+                  for value in obj.values():
+                      if isinstance(value, (dict, list)):
                           records.extend(find_records(value))
 
               return records
 
-          # --------------------------------------------------
-          # API से records निकालना
-          # --------------------------------------------------
-
           records = find_records(data)
 
-          # Duplicate dictionaries हटाना
-          unique_records = []
-          seen = set()
+          print("📦 Records:", len(records))
+
+          sujas = []
 
           for record in records:
-              marker = str(record)
-
-              if marker not in seen:
-                  seen.add(marker)
-                  unique_records.append(record)
-
-          records = unique_records
-
-          print("📦 API records मिले:", len(records))
-
-          if not records:
-              raise Exception("❌ Sujas records नहीं मिले")
-
-          # --------------------------------------------------
-          # Sujas वाले records पहचानना
-          # --------------------------------------------------
-
-          sujas_records = []
-
-          for record in records:
-
               title = str(
-                  get_value(
-                      record,
-                      "Title",
-                      "title",
-                      "Subject",
-                      "subject",
-                      "Name",
-                      "name"
-                  ) or ""
+                  record.get("Title")
+                  or record.get("title")
+                  or ""
               )
 
-              # Sujas title
-              if "सुजस" in title.lower() or "sujas" in title.lower():
+              pdf = find_pdf(record)
 
-                  pdf_url = find_pdf(record)
+              if pdf and (
+                  "sujas" in title.lower()
+                  or "सुजस" in title
+              ):
+                  sujas.append((record, title, pdf))
 
-                  if pdf_url:
-                      sujas_records.append(
-                          (record, title, pdf_url)
-                      )
+          if not sujas:
+              raise Exception("❌ Sujas PDF नहीं मिली")
 
-          # --------------------------------------------------
-          # अगर title में Sujas नहीं मिला तो PDF वाले records
-          # में fallback search
-          # --------------------------------------------------
-
-          if not sujas_records:
-
-              print("⚠️ Title से Sujas record नहीं मिला.")
-              print("🔎 PDF records में fallback search...")
-
-              for record in records:
-
-                  pdf_url = find_pdf(record)
-
-                  if pdf_url:
-
-                      title = str(
-                          get_value(
-                              record,
-                              "Title",
-                              "title",
-                              "Subject",
-                              "subject",
-                              "Name",
-                              "name"
-                          ) or "Latest Sujas"
-                      )
-
-                      sujas_records.append(
-                          (record, title, pdf_url)
-                      )
-
-          if not sujas_records:
-              raise Exception("❌ किसी भी record में Sujas PDF नहीं मिली")
-
-          # --------------------------------------------------
-          # Latest record चुनना
-          # --------------------------------------------------
-
-          def record_score(item):
-
-              record = item[0]
-
-              possible_ids = [
-                  get_value(
-                      record,
-                      "Id",
-                      "ID",
-                      "OrderId",
-                      "OrderID",
-                      "orderId"
-                  )
-              ]
-
-              for value in possible_ids:
-                  try:
-                      return (2, int(value))
-                  except:
-                      pass
-
-              possible_dates = [
-                  get_value(
-                      record,
-                      "Date",
-                      "date",
-                      "CreatedDate",
-                      "createdDate",
-                      "EntryDate",
-                      "entryDate",
-                      "PublishDate",
-                      "publishDate"
-                  )
-              ]
-
-              for value in possible_dates:
-                  if value:
-                      try:
-                          parsed = datetime.fromisoformat(
-                              str(value).replace("Z", "+00:00")
-                          )
-                          return (1, parsed.timestamp())
-                      except:
-                          pass
-
-              return (0, 0)
-
-          sujas_records.sort(
-              key=record_score,
-              reverse=True
-          )
-
-          latest, title, pdf_url = sujas_records[0]
+          # API सामान्यतः newest पहले देता है
+          latest, title, pdf_url = sujas[0]
 
           order_id = str(
-              get_value(
-                  latest,
-                  "Id",
-                  "ID",
-                  "OrderId",
-                  "OrderID",
-                  "orderId"
-              ) or ""
+              latest.get("Id")
+              or latest.get("ID")
+              or latest.get("OrderId")
+              or latest.get("orderId")
+              or ""
           )
 
-          print()
-          print("====================================")
-          print("📰 Latest Sujas")
-          print("Title:", title)
-          print("ID:", order_id)
-          print("PDF:", pdf_url)
-          print("====================================")
-          print()
-
-          # --------------------------------------------------
-          # Duplicate protection
-          # --------------------------------------------------
+          print("📰 Title:", title)
+          print("🆔 ID:", order_id)
+          print("📄 PDF:", pdf_url)
 
           current_key = order_id + "|" + pdf_url
 
@@ -365,58 +163,31 @@ jobs:
 
           if old_key == current_key:
               print("⏭️ यह Sujas पहले ही upload हो चुकी है.")
-              print("कोई नया upload नहीं किया जाएगा.")
               raise SystemExit(0)
 
-          print("🆕 नई Sujas मिली!")
           print("⬇️ PDF download हो रही है...")
 
-          # --------------------------------------------------
-          # PDF download
-          # --------------------------------------------------
-
-          pdf_response = requests.get(
+          pdf = requests.get(
               pdf_url,
               timeout=180,
-              headers={
-                  "User-Agent": "Mozilla/5.0"
-              }
+              headers={"User-Agent": "Mozilla/5.0"}
           )
 
-          pdf_response.raise_for_status()
-
-          pdf_content = pdf_response.content
-
-          if not pdf_content:
-              raise Exception("❌ PDF खाली मिली")
-
-          # PDF validation
-          if not pdf_content[:5] == b"%PDF-":
-              print("⚠️ Downloaded file PDF signature से match नहीं करती.")
-              print("First bytes:", pdf_content[:20])
+          pdf.raise_for_status()
 
           with open("sujas.pdf", "wb") as f:
-              f.write(pdf_content)
+              f.write(pdf.content)
 
-          print(
-              "✅ PDF download complete:",
-              len(pdf_content),
-              "bytes"
-          )
+          print("📦 PDF size:", len(pdf.content), "bytes")
 
-          # --------------------------------------------------
-          # Telegram upload
-          # --------------------------------------------------
+          print("📤 Telegram पर upload हो रही है...")
 
           telegram_url = (
               f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
           )
 
-          print("📤 Telegram channel पर upload हो रहा है...")
-
           with open("sujas.pdf", "rb") as f:
-
-              telegram_response = requests.post(
+              response = requests.post(
                   telegram_url,
                   data={
                       "chat_id": CHANNEL,
@@ -432,50 +203,28 @@ jobs:
                   timeout=240
               )
 
-          print(
-              "Telegram HTTP status:",
-              telegram_response.status_code
-          )
+          response.raise_for_status()
 
-          telegram_response.raise_for_status()
+          result = response.json()
 
-          telegram_result = telegram_response.json()
+          if not result.get("ok"):
+              raise Exception(result)
 
-          if not telegram_result.get("ok"):
-              raise Exception(
-                  "Telegram upload failed: "
-                  + str(telegram_result)
-              )
-
-          print()
-          print("====================================")
-          print("🎉 SUCCESS!")
-          print("✅ Sujas Telegram channel पर upload हो गई.")
-          print("====================================")
-          print()
-
-          # --------------------------------------------------
-          # State केवल successful upload के बाद save होगी
-          # --------------------------------------------------
+          print("🎉 Sujas successfully Telegram पर upload हो गई!")
 
           with open(state_file, "w", encoding="utf-8") as f:
               f.write(current_key)
 
-          print("💾 Duplicate-protection state save हो गई.")
-
           PY
 
-      - name: Save duplicate-protection state
+      - name: Save state
         run: |
           if git diff --quiet -- latest_sujas_key.txt; then
-            echo "No new Sujas state to save."
+            echo "No new state."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
             git add latest_sujas_key.txt
-
-            git commit -m "Save latest Sujas upload state"
-
+            git commit -m "Save latest Sujas state"
             git push
           fi
