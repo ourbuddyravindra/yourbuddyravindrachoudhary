@@ -6,7 +6,6 @@ on:
       - "Rajasthan Sujas Auto Upload"
     types:
       - completed
-
   workflow_dispatch:
 
 permissions:
@@ -17,47 +16,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
   process:
-
     if: >
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
-
     runs-on: ubuntu-latest
-
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
-
-      # ==========================================
-      # 1. CHECKOUT
-      # ==========================================
-
       - name: Checkout repository
         uses: actions/checkout@v6
-
-
-      # ==========================================
-      # 2. FIND LATEST SUJAS PDF
-      # ==========================================
 
       - name: Find latest Sujas PDF
         id: find_pdf
         run: |
-
           python - <<'PY'
-
           import os
+          import time
           import requests
           from pathlib import Path
-
 
           API_URL = (
               "https://dipr.rajasthan.gov.in/"
               "webapi/api/OrderPortal/GetAll"
           )
-
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -70,7 +52,6 @@ jobs:
               "EntryToDate": "",
               "FromDate": "",
               "Id": 0,
-
               "IndexModel": {
                   "AdvanceSearchModel": {},
                   "PageSize": 15,
@@ -79,7 +60,6 @@ jobs:
                   "Search": None,
                   "OrderBy": None
               },
-
               "IndividualBeneficiaryScheme": "",
               "IsImagesRequired": True,
               "IsLatest": -1,
@@ -95,421 +75,276 @@ jobs:
               "Type": "10"
           }
 
+          MAX_ATTEMPTS = 6
+          response = None
 
-          print("========================================")
-          print("DIPR API REQUEST")
-          print("========================================")
+          for attempt in range(1, MAX_ATTEMPTS + 1):
+              print(f"🔄 DIPR API attempt {attempt}/{MAX_ATTEMPTS}")
+              try:
+                  response = requests.post(
+                      API_URL,
+                      json=payload,
+                      headers={
+                          "User-Agent": "Mozilla/5.0",
+                          "Accept": "application/json",
+                          "Content-Type": "application/json"
+                      },
+                      timeout=(45, 150)
+                  )
 
+                  print("HTTP STATUS:", response.status_code)
 
-          response = requests.post(
-              API_URL,
-              json=payload,
-              timeout=60
-          )
+                  if response.status_code == 200:
+                      print("✅ DIPR API response received")
+                      break
 
+                  print("⚠️ DIPR HTTP ERROR:", response.status_code)
+                  print(response.text[:1000])
 
-          print("HTTP STATUS:", response.status_code)
+                  if response.status_code in [408, 425, 429, 500, 502, 503, 504]:
+                      if attempt < MAX_ATTEMPTS:
+                          wait_time = min(15 * attempt, 60)
+                          print(f"⏳ Retrying after {wait_time} seconds...")
+                          time.sleep(wait_time)
+                          continue
 
+                  response.raise_for_status()
+
+              except requests.exceptions.Timeout as exc:
+                  print("⚠️ DIPR timeout:", str(exc))
+                  if attempt == MAX_ATTEMPTS:
+                      raise SystemExit(
+                          "❌ DIPR API लगातार timeout हो रहा है। "
+                          "सभी retry attempts के बाद भी response नहीं मिला।"
+                      )
+                  wait_time = min(15 * attempt, 60)
+                  print(f"⏳ Retrying after {wait_time} seconds...")
+                  time.sleep(wait_time)
+
+              except requests.exceptions.ConnectionError as exc:
+                  print("⚠️ DIPR connection error:", str(exc))
+                  if attempt == MAX_ATTEMPTS:
+                      raise SystemExit(
+                          "❌ DIPR server से connection नहीं बन पाया। "
+                          "सभी retry attempts पूरे हो गए।"
+                      )
+                  wait_time = min(15 * attempt, 60)
+                  print(f"⏳ Retrying after {wait_time} seconds...")
+                  time.sleep(wait_time)
+
+              except requests.RequestException as exc:
+                  print("⚠️ DIPR request error:", str(exc))
+                  if attempt == MAX_ATTEMPTS:
+                      raise
+                  wait_time = min(15 * attempt, 60)
+                  print(f"⏳ Retrying after {wait_time} seconds...")
+                  time.sleep(wait_time)
+
+          if response is None:
+              raise SystemExit("❌ DIPR API से कोई response नहीं मिला")
 
           response.raise_for_status()
-
-
           data = response.json()
-
-
-          # ==========================================
-          # ROBUST API RESPONSE PARSING
-          # ==========================================
 
           items = None
 
-
           if isinstance(data, list):
-
               items = data
-
-
           elif isinstance(data, dict):
-
               for key in [
-                  "Data",
-                  "data",
-                  "Result",
-                  "result",
-                  "Items",
-                  "items",
-                  "Records",
-                  "records"
+                  "Data", "data", "Result", "result",
+                  "Items", "items", "Records", "records"
               ]:
-
                   value = data.get(key)
-
                   if isinstance(value, list):
-
                       items = value
                       break
 
-
               if items is None:
-
-                  for key in [
-                      "Data",
-                      "data",
-                      "Result",
-                      "result"
-                  ]:
-
+                  for key in ["Data", "data", "Result", "result"]:
                       value = data.get(key)
-
                       if isinstance(value, dict):
-
                           for nested_key in [
-                              "Data",
-                              "data",
-                              "Result",
-                              "result",
-                              "Items",
-                              "items",
-                              "Records",
-                              "records"
+                              "Data", "data", "Result", "result",
+                              "Items", "items", "Records", "records"
                           ]:
-
-                              nested_value = value.get(
-                                  nested_key
-                              )
-
-                              if isinstance(
-                                  nested_value,
-                                  list
-                              ):
-
+                              nested_value = value.get(nested_key)
+                              if isinstance(nested_value, list):
                                   items = nested_value
                                   break
-
-
                           if items is not None:
                               break
 
-
           if not isinstance(items, list):
-
-              print("")
               print("❌ UNKNOWN DIPR RESPONSE")
-              print("========================================")
               print(str(data)[:5000])
-              print("========================================")
-
-              raise SystemExit(
-                  "❌ DIPR API response समझ नहीं आया"
-              )
-
+              raise SystemExit("❌ DIPR API response समझ नहीं आया")
 
           if not items:
+              raise SystemExit("❌ Sujas data नहीं मिला")
 
-              raise SystemExit(
-                  "❌ Sujas data नहीं मिला"
-              )
-
-
-          print(
-              "DIPR records found:",
-              len(items)
-          )
-
-
-          # ==========================================
-          # FIND PDF URL
-          # ==========================================
+          print("DIPR records found:", len(items))
 
           def find_pdf(obj):
-
               if isinstance(obj, dict):
-
                   for key, value in obj.items():
-
                       if isinstance(value, str):
-
                           v = value.strip().lower()
-
-                          if (
-                              ".pdf" in v
-                              and (
-                                  v.startswith("http://")
-                                  or
-                                  v.startswith("https://")
-                              )
+                          if ".pdf" in v and (
+                              v.startswith("http://") or
+                              v.startswith("https://")
                           ):
-
                               return value
-
-
                       found = find_pdf(value)
-
                       if found:
-
                           return found
-
-
               elif isinstance(obj, list):
-
                   for item in obj:
-
                       found = find_pdf(item)
-
                       if found:
-
                           return found
-
-
               return None
-
 
           selected = None
           pdf_url = None
 
-
           for record in items:
-
               found = find_pdf(record)
-
               if found:
-
                   selected = record
                   pdf_url = found
-
                   break
 
-
           if not pdf_url:
-
-              print("")
               print("❌ कोई PDF URL नहीं मिला")
-              print("========================================")
-              print("FIRST RECORD PREVIEW:")
               print(str(items[0])[:5000])
-              print("========================================")
-
-              raise SystemExit(
-                  "❌ Sujas PDF URL नहीं मिला"
-              )
-
-
-          # ==========================================
-          # FIND ORDER ID
-          # ==========================================
+              raise SystemExit("❌ Sujas PDF URL नहीं मिला")
 
           order_id = ""
 
-
           if isinstance(selected, dict):
-
               for key in [
-                  "Id",
-                  "ID",
-                  "id",
-                  "OrderId",
-                  "OrderID",
-                  "orderId"
+                  "Id", "ID", "id",
+                  "OrderId", "OrderID", "orderId"
               ]:
-
                   if key in selected:
-
                       value = selected[key]
-
                       if value is not None:
-
                           order_id = str(value)
-
                       break
-
-
-          # ==========================================
-          # FIND TITLE
-          # ==========================================
 
           title = "Latest Sujas"
 
-
           if isinstance(selected, dict):
-
               title = (
-                  selected.get("Title")
-                  or selected.get("title")
-                  or title
+                  selected.get("Title") or
+                  selected.get("title") or
+                  title
               )
 
-
-          print("")
           print("========================================")
           print("SUJAS PDF FOUND")
-          print("========================================")
           print("TITLE:", title)
           print("ORDER ID:", order_id)
           print("PDF:", pdf_url)
           print("========================================")
 
+          pdf_response = None
+          PDF_MAX_ATTEMPTS = 4
 
-          # ==========================================
-          # DOWNLOAD PDF
-          # ==========================================
+          for attempt in range(1, PDF_MAX_ATTEMPTS + 1):
+              print(f"📥 PDF download attempt {attempt}/{PDF_MAX_ATTEMPTS}")
+              try:
+                  pdf_response = requests.get(
+                      pdf_url,
+                      headers={
+                          "User-Agent": "Mozilla/5.0",
+                          "Accept": "application/pdf,*/*"
+                      },
+                      timeout=(45, 180)
+                  )
 
-          print("")
-          print("Downloading PDF...")
+                  print("PDF HTTP STATUS:", pdf_response.status_code)
 
+                  if pdf_response.status_code == 200:
+                      break
 
-          pdf_response = requests.get(
-              pdf_url,
-              timeout=180
-          )
+                  if pdf_response.status_code in [408, 425, 429, 500, 502, 503, 504]:
+                      if attempt < PDF_MAX_ATTEMPTS:
+                          wait_time = 10 * attempt
+                          print(f"⏳ PDF retry after {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
 
+                  pdf_response.raise_for_status()
+
+              except requests.RequestException as exc:
+                  print("⚠️ PDF download error:", str(exc))
+                  if attempt == PDF_MAX_ATTEMPTS:
+                      raise SystemExit(
+                          "❌ PDF download नहीं हो पाया सभी retry attempts के बाद।"
+                      )
+                  wait_time = 10 * attempt
+                  print(f"⏳ PDF retry after {wait_time}s...")
+                  time.sleep(wait_time)
+
+          if pdf_response is None:
+              raise SystemExit("❌ PDF response नहीं मिला")
 
           pdf_response.raise_for_status()
 
-
-          pdf_path = Path(
-              "sujas_current.pdf"
-          )
-
-
-          pdf_path.write_bytes(
-              pdf_response.content
-          )
-
+          pdf_path = Path("sujas_current.pdf")
+          pdf_path.write_bytes(pdf_response.content)
 
           pdf_size = pdf_path.stat().st_size
-
-
-          print(
-              "PDF size:",
-              pdf_size,
-              "bytes"
-          )
-
+          print("PDF size:", pdf_size, "bytes")
 
           if pdf_size == 0:
+              raise SystemExit("❌ Downloaded PDF खाली है")
 
-              raise SystemExit(
-                  "❌ Downloaded PDF खाली है"
-              )
+          print("✅ PDF successfully downloaded")
 
-
-          print(
-              "✅ PDF successfully downloaded"
-          )
-
-
-          # ==========================================
-          # GITHUB OUTPUTS
-          # ==========================================
-
-          with open(
-              os.environ["GITHUB_OUTPUT"],
-              "a",
-              encoding="utf-8"
-          ) as output:
-
-              output.write(
-                  f"pdf_path={pdf_path}\n"
-              )
-
-              output.write(
-                  f"pdf_url={pdf_url}\n"
-              )
-
-              output.write(
-                  f"order_id={order_id}\n"
-              )
-
-              output.write(
-                  f"title={title}\n"
-              )
-
-
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"pdf_path={pdf_path}\n")
+              output.write(f"pdf_url={pdf_url}\n")
+              output.write(f"order_id={order_id}\n")
+              output.write(f"title={title}\n")
           PY
-
-
-      # ==========================================
-      # 3. DUPLICATE CHECK
-      # ==========================================
 
       - name: Check processed Sujas
         id: duplicate
         run: |
-
           CURRENT_ID="${{ steps.find_pdf.outputs.order_id }}"
-
           STATE_FILE="current_affairs_sujas_state.txt"
 
-
           if [ -f "$STATE_FILE" ]; then
-
             OLD_ID=$(cat "$STATE_FILE")
-
           else
-
             OLD_ID=""
-
           fi
-
-
-          echo "========================================"
-          echo "SUJAS DUPLICATE CHECK"
-          echo "========================================"
 
           echo "OLD SUJAS ID: ${OLD_ID:-NONE}"
-
           echo "CURRENT SUJAS ID: ${CURRENT_ID:-NONE}"
 
-
-          if [ -n "$CURRENT_ID" ] &&
-             [ "$OLD_ID" = "$CURRENT_ID" ]; then
-
-            echo ""
+          if [ -n "$CURRENT_ID" ] && [ "$OLD_ID" = "$CURRENT_ID" ]; then
             echo "⏭️ SAME SUJAS — ALREADY PROCESSED"
-
             echo "new_sujas=false" >> "$GITHUB_OUTPUT"
-
           else
-
-            echo ""
             echo "🆕 NEW SUJAS"
-
             echo "new_sujas=true" >> "$GITHUB_OUTPUT"
-
           fi
-
-
-      # ==========================================
-      # 4. GEMINI + TELEGRAM
-      # ==========================================
 
       - name: Generate and send current affairs
         if: steps.duplicate.outputs.new_sujas == 'true'
-
         env:
-
-          GEMINI_API_KEY:
-            ${{ secrets.GEMINI_API_KEY }}
-
-          CURRENT_AFFAIRS_BOT_TOKEN:
-            ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
-
-          TELEGRAM_CHANNEL:
-            "@yourbuddyravindrachoudhary"
-
-          PDF_PATH:
-            ${{ steps.find_pdf.outputs.pdf_path }}
-
-          PDF_URL:
-            ${{ steps.find_pdf.outputs.pdf_url }}
-
-          ORDER_ID:
-            ${{ steps.find_pdf.outputs.order_id }}
-
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CURRENT_AFFAIRS_BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
+          TELEGRAM_CHANNEL: "@yourbuddyravindrachoudhary"
+          PDF_PATH: ${{ steps.find_pdf.outputs.pdf_path }}
+          PDF_URL: ${{ steps.find_pdf.outputs.pdf_url }}
+          ORDER_ID: ${{ steps.find_pdf.outputs.order_id }}
         run: |
-
           python - <<'PY'
-
           import base64
           import json
           import os
@@ -517,91 +352,26 @@ jobs:
           import requests
           from pathlib import Path
 
-
-          API_KEY = os.environ[
-              "GEMINI_API_KEY"
-          ]
-
-
-          BOT_TOKEN = os.environ[
-              "CURRENT_AFFAIRS_BOT_TOKEN"
-          ]
-
-
-          CHANNEL = os.environ[
-              "TELEGRAM_CHANNEL"
-          ]
-
-
-          PDF_PATH = Path(
-              os.environ["PDF_PATH"]
-          )
-
-
-          PDF_URL = os.environ[
-              "PDF_URL"
-          ]
-
-
-          ORDER_ID = os.environ.get(
-              "ORDER_ID",
-              ""
-          )
-
-
-          # ==========================================
-          # CHECK CONFIGURATION
-          # ==========================================
+          API_KEY = os.environ["GEMINI_API_KEY"]
+          BOT_TOKEN = os.environ["CURRENT_AFFAIRS_BOT_TOKEN"]
+          CHANNEL = os.environ["TELEGRAM_CHANNEL"]
+          PDF_PATH = Path(os.environ["PDF_PATH"])
+          PDF_URL = os.environ["PDF_URL"]
+          ORDER_ID = os.environ.get("ORDER_ID", "")
 
           if not API_KEY:
-
-              raise SystemExit(
-                  "❌ GEMINI_API_KEY secret नहीं मिला"
-              )
-
+              raise SystemExit("❌ GEMINI_API_KEY secret नहीं मिला")
 
           if not BOT_TOKEN:
-
-              raise SystemExit(
-                  "❌ CURRENT_AFFAIRS_BOT_TOKEN secret नहीं मिला"
-              )
-
-
-          # ==========================================
-          # CHECK PDF
-          # ==========================================
+              raise SystemExit("❌ CURRENT_AFFAIRS_BOT_TOKEN secret नहीं मिला")
 
           if not PDF_PATH.exists():
-
-              raise SystemExit(
-                  "❌ PDF नहीं मिला"
-              )
-
+              raise SystemExit("❌ PDF नहीं मिला")
 
           pdf_bytes = PDF_PATH.read_bytes()
 
-
           if not pdf_bytes:
-
-              raise SystemExit(
-                  "❌ PDF खाली है"
-              )
-
-
-          print("========================================")
-          print("GEMINI PROCESSING")
-          print("========================================")
-
-          print(
-              "PDF size:",
-              len(pdf_bytes),
-              "bytes"
-          )
-
-
-          # ==========================================
-          # PROMPT
-          # ==========================================
+              raise SystemExit("❌ PDF खाली है")
 
           prompt = r"""
           तुम Rajasthan competitive examinations के लिए
@@ -643,639 +413,254 @@ jobs:
           केवल valid JSON output दो।
           """
 
-
-          # ==========================================
-          # JSON SCHEMA
-          # ==========================================
-
           schema = {
-
               "type": "object",
-
               "properties": {
-
                   "items": {
-
                       "type": "array",
-
                       "items": {
-
                           "type": "object",
-
                           "properties": {
-
-                              "category": {
-                                  "type": "string"
-                              },
-
-                              "question": {
-                                  "type": "string"
-                              },
-
-                              "option_a": {
-                                  "type": "string"
-                              },
-
-                              "option_b": {
-                                  "type": "string"
-                              },
-
-                              "option_c": {
-                                  "type": "string"
-                              },
-
-                              "option_d": {
-                                  "type": "string"
-                              },
-
-                              "answer": {
-                                  "type": "string"
-                              },
-
-                              "explanation": {
-                                  "type": "string"
-                              },
-
-                              "page": {
-                                  "type": "string"
-                              },
-
-                              "source": {
-                                  "type": "string"
-                              }
-
+                              "category": {"type": "string"},
+                              "question": {"type": "string"},
+                              "option_a": {"type": "string"},
+                              "option_b": {"type": "string"},
+                              "option_c": {"type": "string"},
+                              "option_d": {"type": "string"},
+                              "answer": {"type": "string"},
+                              "explanation": {"type": "string"},
+                              "page": {"type": "string"},
+                              "source": {"type": "string"}
                           },
-
                           "required": [
-
-                              "category",
-                              "question",
-                              "option_a",
-                              "option_b",
-                              "option_c",
-                              "option_d",
-                              "answer",
-                              "explanation",
-                              "page",
-                              "source"
-
+                              "category", "question",
+                              "option_a", "option_b",
+                              "option_c", "option_d",
+                              "answer", "explanation",
+                              "page", "source"
                           ]
-
                       }
-
                   }
-
               },
-
-              "required": [
-                  "items"
-              ]
-
+              "required": ["items"]
           }
 
-
-          # ==========================================
-          # GEMINI API
-          # ==========================================
-
           MODEL = "gemini-3.7-flash"
-
 
           API_URL = (
               "https://generativelanguage.googleapis.com/"
               f"v1beta/models/{MODEL}:generateContent"
           )
 
-
-          pdf_base64 = base64.b64encode(
-              pdf_bytes
-          ).decode("utf-8")
-
+          pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
           payload = {
-
-              "contents": [
-
-                  {
-
-                      "parts": [
-
-                          {
-                              "text": prompt
-                          },
-
-                          {
-
-                              "inline_data": {
-
-                                  "mime_type":
-                                      "application/pdf",
-
-                                  "data":
-                                      pdf_base64
-
-                              }
-
+              "contents": [{
+                  "parts": [
+                      {"text": prompt},
+                      {
+                          "inline_data": {
+                              "mime_type": "application/pdf",
+                              "data": pdf_base64
                           }
-
-                      ]
-
-                  }
-
-              ],
-
+                      }
+                  ]
+              }],
               "generationConfig": {
-
-                  "responseMimeType":
-                      "application/json",
-
-                  "responseSchema":
-                      schema,
-
-                  "temperature":
-                      0.1
-
+                  "responseMimeType": "application/json",
+                  "responseSchema": schema,
+                  "temperature": 0.1
               }
-
           }
 
-
-          # ==========================================
-          # GEMINI RETRY
-          # ==========================================
-
           MAX_ATTEMPTS = 5
-
           gemini_data = None
 
-
-          for attempt in range(
-              1,
-              MAX_ATTEMPTS + 1
-          ):
-
-              print(
-                  f"Gemini attempt "
-                  f"{attempt}/{MAX_ATTEMPTS}"
-              )
-
+          for attempt in range(1, MAX_ATTEMPTS + 1):
+              print(f"Gemini attempt {attempt}/{MAX_ATTEMPTS}")
 
               try:
-
                   response = requests.post(
-
                       API_URL,
-
                       headers={
-
-                          "x-goog-api-key":
-                              API_KEY,
-
-                          "Content-Type":
-                              "application/json"
-
+                          "x-goog-api-key": API_KEY,
+                          "Content-Type": "application/json"
                       },
-
                       json=payload,
-
                       timeout=300
-
                   )
-
 
                   if response.status_code == 200:
-
-                      gemini_data = (
-                          response.json()
-                      )
-
-                      print(
-                          "✅ Gemini response received"
-                      )
-
+                      gemini_data = response.json()
+                      print("✅ Gemini response received")
                       break
 
+                  print("⚠️ Gemini HTTP:", response.status_code)
+                  print(response.text[:1500])
 
-                  print(
-                      "⚠️ Gemini HTTP:",
-                      response.status_code
-                  )
-
-
-                  print(
-                      response.text[:1500]
-                  )
-
-
-                  if response.status_code in [
-
-                      429,
-                      500,
-                      502,
-                      503,
-                      504
-
-                  ]:
-
-                      wait_time = (
-                          10 * attempt
-                      )
-
-                      print(
-                          f"⏳ Waiting "
-                          f"{wait_time}s..."
-                      )
-
-                      time.sleep(
-                          wait_time
-                      )
-
+                  if response.status_code in [429, 500, 502, 503, 504]:
+                      wait_time = 10 * attempt
+                      print(f"⏳ Waiting {wait_time}s...")
+                      time.sleep(wait_time)
                       continue
-
 
                   response.raise_for_status()
 
-
               except requests.RequestException as exc:
-
-                  print(
-                      "⚠️ Gemini request error:",
-                      str(exc)
-                  )
-
+                  print("⚠️ Gemini request error:", str(exc))
 
                   if attempt == MAX_ATTEMPTS:
-
                       raise
 
-
-                  time.sleep(
-                      10 * attempt
-                  )
-
+                  time.sleep(10 * attempt)
 
           if gemini_data is None:
+              raise SystemExit("❌ Gemini failed after retries")
 
-              raise SystemExit(
-                  "❌ Gemini failed after retries"
-              )
-
-
-          # ==========================================
-          # EXTRACT GEMINI RESPONSE
-          # ==========================================
-
-          candidates = gemini_data.get(
-              "candidates",
-              []
-          )
-
+          candidates = gemini_data.get("candidates", [])
 
           if not candidates:
-
-              print(
-                  json.dumps(
-                      gemini_data,
-                      ensure_ascii=False,
-                      indent=2
-                  )[:5000]
-              )
-
-              raise SystemExit(
-                  "❌ Gemini candidate नहीं मिला"
-              )
-
+              print(json.dumps(
+                  gemini_data,
+                  ensure_ascii=False,
+                  indent=2
+              )[:5000])
+              raise SystemExit("❌ Gemini candidate नहीं मिला")
 
           parts = (
-
               candidates[0]
               .get("content", {})
               .get("parts", [])
-
           )
-
 
           text = ""
 
-
           for part in parts:
-
               if "text" in part:
-
                   text += part["text"]
 
-
           if not text:
+              raise SystemExit("❌ Gemini response खाली है")
 
-              raise SystemExit(
-                  "❌ Gemini response खाली है"
-              )
+          result = json.loads(text)
+          items = result.get("items", [])
 
-
-          # ==========================================
-          # JSON PARSE
-          # ==========================================
-
-          try:
-
-              result = json.loads(
-                  text
-              )
-
-          except json.JSONDecodeError:
-
-              print(
-                  "Gemini raw response:"
-              )
-
-              print(
-                  text[:5000]
-              )
-
-              raise
-
-
-          items = result.get(
-              "items",
-              []
-          )
-
-
-          print(
-              "Generated MCQs:",
-              len(items)
-          )
-
+          print("Generated MCQs:", len(items))
 
           if not items:
+              raise SystemExit("❌ कोई MCQ generate नहीं हुआ")
 
-              raise SystemExit(
-                  "❌ कोई MCQ generate नहीं हुआ"
-              )
-
-
-          # ==========================================
-          # SAVE JSON
-          # ==========================================
-
-          Path(
-              "current_affairs.json"
-          ).write_text(
-
+          Path("current_affairs.json").write_text(
               json.dumps(
                   result,
                   ensure_ascii=False,
                   indent=2
               ),
-
               encoding="utf-8"
-
           )
-
-
-          print(
-              "✅ current_affairs.json saved"
-          )
-
-
-          # ==========================================
-          # TELEGRAM
-          # ==========================================
 
           telegram_url = (
-
               "https://api.telegram.org/"
               f"bot{BOT_TOKEN}/sendMessage"
-
           )
-
 
           sent = 0
 
-
-          for index, item in enumerate(
-              items,
-              start=1
-          ):
-
-              category = item.get(
-                  "category",
-                  ""
-              )
-
+          for index, item in enumerate(items, start=1):
+              category = item.get("category", "")
 
               message = (
-
                   "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
-
                   "━━━━━━━━━━━━━━━━━━\n\n"
-
               )
-
 
               if category:
-
                   message += (
-
                       f"🏷️ <b>Category:</b> "
                       f"{category}\n\n"
-
                   )
 
-
               message += (
-
                   f"<b>प्रश्न {index}.</b> "
                   f"{item.get('question', '')}\n\n"
-
                   f"(A) {item.get('option_a', '')}\n"
-
                   f"(B) {item.get('option_b', '')}\n"
-
                   f"(C) {item.get('option_c', '')}\n"
-
                   f"(D) {item.get('option_d', '')}\n\n"
-
                   f"✅ <b>उत्तर:</b> "
                   f"{item.get('answer', '')}\n\n"
-
                   f"💡 <b>व्याख्या:</b> "
                   f"{item.get('explanation', '')}"
-
               )
 
-
-              page = item.get(
-                  "page",
-                  ""
-              )
-
+              page = item.get("page", "")
 
               if page:
-
                   message += (
-
                       f"\n\n📄 <b>Page:</b> "
                       f"{page}"
-
                   )
-
 
               message += (
-
                   "\n\n━━━━━━━━━━━━━━━━━━\n"
-
                   "📚 Source: <b>Sujas</b>\n"
-
-                  "🤖 YourBuddy Current Affairs"
-
+                  "📢 <b>@yourbuddyravindrachoudhary</b>"
               )
-
-
-              # ==========================================
-              # TELEGRAM MESSAGE LENGTH
-              # ==========================================
 
               if len(message) > 4000:
-
-                  message = (
-
-                      message[:3950]
-
-                      + "\n\n…"
-
-                  )
-
+                  message = message[:3950] + "\n\n…"
 
               telegram_response = requests.post(
-
                   telegram_url,
-
                   json={
-
-                      "chat_id":
-                          CHANNEL,
-
-                      "text":
-                          message,
-
-                      "parse_mode":
-                          "HTML",
-
-                      "disable_web_page_preview":
-                          True
-
+                      "chat_id": CHANNEL,
+                      "text": message,
+                      "parse_mode": "HTML",
+                      "disable_web_page_preview": True
                   },
-
                   timeout=30
-
               )
-
 
               telegram_response.raise_for_status()
 
+              telegram_result = telegram_response.json()
 
-              telegram_result = (
-                  telegram_response.json()
-              )
-
-
-              if not telegram_result.get(
-                  "ok"
-              ):
-
+              if not telegram_result.get("ok"):
                   raise SystemExit(
-
                       "❌ Telegram error: "
-
-                      + str(
-                          telegram_result
-                      )
-
+                      + str(telegram_result)
                   )
 
-
               sent += 1
-
-
-              print(
-                  f"✅ Telegram message "
-                  f"{index} sent"
-              )
-
-
+              print(f"✅ Telegram message {index} sent")
               time.sleep(0.5)
 
-
-          # ==========================================
-          # SAVE STATE
-          # ==========================================
-
-          Path(
-              "current_affairs_sujas_state.txt"
-          ).write_text(
-
+          Path("current_affairs_sujas_state.txt").write_text(
               ORDER_ID,
-
               encoding="utf-8"
-
           )
 
-
-          print("")
           print("========================================")
           print("✅ SUJAS CURRENT AFFAIRS COMPLETE")
           print("========================================")
-
-          print(
-              "✅ MCQs:",
-              len(items)
-          )
-
-          print(
-              "✅ TELEGRAM SENT:",
-              sent
-          )
-
+          print("✅ MCQs:", len(items))
+          print("✅ TELEGRAM SENT:", sent)
           print("========================================")
-
-
           PY
-
-
-      # ==========================================
-      # 5. SAVE RESULTS
-      # ==========================================
 
       - name: Save current affairs data
         if: steps.duplicate.outputs.new_sujas == 'true'
         run: |
-
-          git add \
-            current_affairs.json \
-            current_affairs_sujas_state.txt
-
+          git add             current_affairs.json             current_affairs_sujas_state.txt
 
           if git diff --cached --quiet; then
-
             echo "⏭️ Nothing to commit."
-
           else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-            git config user.name \
-              "github-actions[bot]"
-
-            git config user.email \
-              "41898282+github-actions[bot]@users.noreply.github.com"
-
-
-            git commit \
-              -m "Generate Sujas current affairs"
-
-
+            git commit -m "Generate Sujas current affairs"
             git push
 
-
             echo "✅ Current affairs saved."
-
           fi
