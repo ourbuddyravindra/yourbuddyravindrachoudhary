@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-12T05:50:00.995809+00:00"
+    "generated_at": "2026-09-12T06:29:37.074002+00:00"
   },
   "sources": [
     {
@@ -13,9 +13,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/neerajsircurrentaffairs/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
