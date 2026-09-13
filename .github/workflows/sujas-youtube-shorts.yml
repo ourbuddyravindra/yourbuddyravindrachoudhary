@@ -30,7 +30,7 @@ jobs:
       - name: Install system packages
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-core
+          sudo apt-get install -y ffmpeg fonts-noto-core fonts-dejavu
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -58,7 +58,7 @@ jobs:
           if not state_path.exists():
               raise SystemExit("current_affairs_sujas_state.txt नहीं मिला")
           if not json_path.exists():
-              raise SystemExit("current_affairs.json नहीं मिला; पहले Sujas V2 को सफलतापूर्वक चलाएँ")
+              raise SystemExit("current_affairs.json नहीं मिला")
 
           current_key = state_path.read_text(encoding="utf-8").strip()
           old_key = yt_state_path.read_text(encoding="utf-8").strip() if yt_state_path.exists() else ""
@@ -72,32 +72,65 @@ jobs:
               raise SystemExit("current_affairs.json में MCQs नहीं मिले")
           items = items[:10]
 
-          font_candidates = [
-              "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
-              "/usr/share/fonts/opentype/noto/NotoSansDevanagari-Regular.ttf",
-          ]
-          font_path = next((p for p in font_candidates if Path(p).exists()), None)
-          bold_candidates = [
-              "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf",
-              "/usr/share/fonts/opentype/noto/NotoSansDevanagari-Bold.ttf",
-          ]
-          bold_path = next((p for p in bold_candidates if Path(p).exists()), font_path)
-          if not font_path:
-              raise SystemExit("Devanagari font नहीं मिला")
+          # IMPORTANT: Devanagari-only fonts do not contain Latin glyphs.
+          # Use Devanagari for Hindi runs and DejaVu Sans for English/numbers/URLs.
+          hi_path = "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf"
+          hi_bold_path = "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf"
+          en_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+          en_bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+          for p in [hi_path, hi_bold_path, en_path, en_bold_path]:
+              if not Path(p).exists():
+                  raise SystemExit(f"Font नहीं मिला: {p}")
 
           W, H = 1080, 1920
           out = Path("youtube_frames")
           out.mkdir(exist_ok=True)
 
-          def font(size, bold=False):
-              return ImageFont.truetype(bold_path if bold else font_path, size)
+          def font(size, bold=False, hindi=True):
+              if hindi:
+                  return ImageFont.truetype(hi_bold_path if bold else hi_path, size)
+              return ImageFont.truetype(en_bold_path if bold else en_path, size)
 
-          def wrap(draw, text, fnt, max_width):
+          def is_hi(ch):
+              o = ord(ch)
+              return 0x0900 <= o <= 0x097F
+
+          def runs(text, size, bold):
+              text = str(text or "")
+              result = []
+              if not text:
+                  return result
+              start = 0
+              current = is_hi(text[0])
+              for i, ch in enumerate(text[1:], 1):
+                  kind = is_hi(ch)
+                  if kind != current:
+                      result.append((text[start:i], font(size, bold, current)))
+                      start = i
+                      current = kind
+              result.append((text[start:], font(size, bold, current)))
+              return result
+
+          def text_width(text, size, bold):
+              total = 0
+              for part, fnt in runs(text, size, bold):
+                  box = fnt.getbbox(part)
+                  total += box[2] - box[0]
+              return total
+
+          def draw_mixed(draw, xy, text, size, bold, fill):
+              x, y = xy
+              for part, fnt in runs(text, size, bold):
+                  draw.text((x, y), part, font=fnt, fill=fill)
+                  box = fnt.getbbox(part)
+                  x += box[2] - box[0]
+
+          def wrap(draw, text, size, bold, max_width):
               words = str(text or "").replace("\n", " ").split()
               lines, cur = [], ""
               for word in words:
                   test = word if not cur else cur + " " + word
-                  if draw.textbbox((0, 0), test, font=fnt)[2] <= max_width:
+                  if text_width(test, size, bold) <= max_width:
                       cur = test
                   else:
                       if cur:
@@ -113,26 +146,29 @@ jobs:
               margin = 70
               y = 90
               draw.rounded_rectangle((45, 45, W-45, H-45), radius=35, outline=(90, 110, 145), width=4)
-              draw.text((margin, y), heading, font=font(52, True), fill=(255, 215, 80))
-              y += 95
+
+              for line in wrap(draw, heading, 52, True, W - 2*margin):
+                  draw_mixed(draw, (margin, y), line, 52, True, (255, 215, 80))
+                  y += 70
+              y += 25
+
               for text, size, bold, fill in body_lines:
-                  fnt = font(size, bold)
-                  for line in wrap(draw, text, fnt, W - 2*margin):
+                  for line in wrap(draw, text, size, bold, W - 2*margin):
                       if y > H - 250:
                           break
-                      draw.text((margin, y), line, font=fnt, fill=fill)
+                      draw_mixed(draw, (margin, y), line, size, bold, fill)
                       y += size + 18
                   y += 18
-              ff = font(34)
+
               fy = H - 150
-              for line in wrap(draw, footer, ff, W - 2*margin)[:2]:
-                  draw.text((margin, fy), line, font=ff, fill=(190, 200, 215))
-                  fy += 45
+              for line in wrap(draw, footer, 30, False, W - 2*margin)[:2]:
+                  draw_mixed(draw, (margin, fy), line, 30, False, (190, 200, 215))
+                  fy += 42
               img.save(path, quality=95)
 
           make_slide(
               out / "000.png",
-              "सुजस Current Affairs",
+              "Sujas Current Affairs",
               [("राजस्थान प्रतियोगी परीक्षाओं के लिए", 46, False, (235, 240, 250)),
                (f"आज के {len(items)} महत्वपूर्ण MCQs", 66, True, (255, 255, 255))]
           )
@@ -149,13 +185,14 @@ jobs:
               ]
               make_slide(out / f"{i:03d}.png", str(item.get("category", "Current Affairs")), body)
 
+          # Final promotion slide. No emoji here because the image fonts are intentionally controlled.
           make_slide(
               out / "999.png",
-              "📢 DAILY NOTES & CURRENT AFFAIRS",
+              "DAILY NOTES & CURRENT AFFAIRS",
               [("ऐसे ही रोज़ के Notes और MCQs के लिए", 44, False, (235,240,250)),
                ("Telegram Channel से जुड़ें", 62, True, (255,255,255)),
-               (telegram, 38, True, (110,210,255))],
-              "https://t.me/yourbuddyravindrachoudhary"
+               (telegram, 34, True, (110,210,255))],
+              telegram
           )
 
           concat = Path("concat.txt")
@@ -175,8 +212,7 @@ jobs:
               "-crf", "20", "-movflags", "+faststart", "sujas_silent.mp4"
           ], check=True)
 
-          # Generate a simple original instrumental bed with FFmpeg's built-in tone sources.
-          # It is not a commercial/trending song and does not download or embed copyrighted music.
+          # Original low-volume instrumental bed, generated locally with FFmpeg.
           music_filter = (
               "sine=frequency=261.63:duration=90[s1];"
               "sine=frequency=329.63:duration=90[s2];"
@@ -191,7 +227,6 @@ jobs:
               "-c:a", "aac", "-b:a", "96k", "background_music.m4a"
           ], check=True)
 
-          # Mix the music under the video. The music is deliberately quiet.
           subprocess.run([
               "ffmpeg", "-y", "-i", "sujas_silent.mp4", "-i", "background_music.m4a",
               "-filter_complex", "[1:a]volume=0.45[a]",
