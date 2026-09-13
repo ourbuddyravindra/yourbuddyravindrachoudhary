@@ -21,7 +21,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
@@ -410,6 +410,17 @@ jobs:
           - एक ही fact पर कई लगभग समान प्रश्न मत बनाओ।
           - प्रश्नों की quality quantity से अधिक महत्वपूर्ण है।
 
+          MCQ GENERATION IS MANDATORY:
+          - कम से कम 10 valid MCQs बनाओ, यदि PDF में 10 या
+            उससे अधिक exam-relevant facts उपलब्ध हैं।
+          - MCQ array कभी खाली मत छोड़ो।
+          - यदि किसी पहले प्रयास में कम questions बनें तो
+            उपलब्ध PDF facts को दोबारा जाँचकर अधिक valid
+            MCQs बनाओ, लेकिन कोई fact invent मत करो।
+          - हर MCQ में question, चारों options, answer,
+            explanation, category, page और source अनिवार्य हैं।
+          - source का मान हमेशा "Sujas" होना चाहिए।
+
           केवल valid JSON output दो।
           """
 
@@ -454,30 +465,47 @@ jobs:
 
           pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
 
-          payload = {
-              "contents": [{
-                  "parts": [
-                      {"text": prompt},
-                      {
-                          "inline_data": {
-                              "mime_type": "application/pdf",
-                              "data": pdf_base64
+          def build_payload(current_prompt):
+              return {
+                  "contents": [{
+                      "parts": [
+                          {"text": current_prompt},
+                          {
+                              "inline_data": {
+                                  "mime_type": "application/pdf",
+                                  "data": pdf_base64
+                              }
                           }
-                      }
-                  ]
-              }],
-              "generationConfig": {
-                  "responseMimeType": "application/json",
-                  "responseSchema": schema,
-                  "temperature": 0.1
+                      ]
+                  }],
+                  "generationConfig": {
+                      "responseMimeType": "application/json",
+                      "responseSchema": schema,
+                      "temperature": 0.1
+                  }
               }
-          }
 
-          MAX_ATTEMPTS = 5
-          gemini_data = None
+          MAX_ATTEMPTS = 6
+          MIN_MCQS = 10
+          final_result = None
+          last_error = None
 
           for attempt in range(1, MAX_ATTEMPTS + 1):
-              print(f"Gemini attempt {attempt}/{MAX_ATTEMPTS}")
+              print(f"🤖 Gemini MCQ attempt {attempt}/{MAX_ATTEMPTS}")
+
+              if attempt == 1:
+                  attempt_prompt = prompt
+              else:
+                  attempt_prompt = prompt + r"""
+
+                  RETRY INSTRUCTION:
+                  पिछला output स्वीकार नहीं किया गया क्योंकि valid
+                  MCQs पर्याप्त नहीं मिले। PDF को फिर से ध्यान से पढ़ो।
+                  इस बार कम से कम 10 अलग और valid MCQs दो, यदि PDF
+                  में इतने exam-relevant facts मौजूद हैं। JSON में
+                  items array खाली नहीं होनी चाहिए। किसी भी स्थिति में
+                  PDF के बाहर का fact या अनुमान मत जोड़ना।
+                  """
 
               try:
                   response = requests.post(
@@ -486,73 +514,109 @@ jobs:
                           "x-goog-api-key": API_KEY,
                           "Content-Type": "application/json"
                       },
-                      json=payload,
+                      json=build_payload(attempt_prompt),
                       timeout=300
                   )
 
-                  if response.status_code == 200:
-                      gemini_data = response.json()
-                      print("✅ Gemini response received")
+                  if response.status_code != 200:
+                      print("⚠️ Gemini HTTP:", response.status_code)
+                      print(response.text[:1500])
+
+                      if response.status_code in [429, 500, 502, 503, 504]:
+                          wait_time = min(10 * attempt, 60)
+                          print(f"⏳ Waiting {wait_time}s...")
+                          time.sleep(wait_time)
+                          continue
+
+                      response.raise_for_status()
+
+                  gemini_data = response.json()
+                  candidates = gemini_data.get("candidates", [])
+
+                  if not candidates:
+                      raise ValueError("Gemini candidate नहीं मिला")
+
+                  parts = (
+                      candidates[0]
+                      .get("content", {})
+                      .get("parts", [])
+                  )
+
+                  text = "".join(
+                      part.get("text", "")
+                      for part in parts
+                      if isinstance(part, dict)
+                  ).strip()
+
+                  if not text:
+                      raise ValueError("Gemini response खाली है")
+
+                  result = json.loads(text)
+                  items = result.get("items", [])
+
+                  if not isinstance(items, list):
+                      raise ValueError("items array नहीं है")
+
+                  valid_items = []
+
+                  for item in items:
+                      if not isinstance(item, dict):
+                          continue
+
+                      required_fields = [
+                          "category", "question",
+                          "option_a", "option_b",
+                          "option_c", "option_d",
+                          "answer", "explanation",
+                          "page", "source"
+                      ]
+
+                      if not all(
+                          str(item.get(field, "")).strip()
+                          for field in required_fields
+                      ):
+                          continue
+
+                      if str(item.get("source", "")).strip().lower() != "sujas":
+                          continue
+
+                      if str(item.get("answer", "")).strip().upper() not in ["A", "B", "C", "D"]:
+                          continue
+
+                      valid_items.append(item)
+
+                  print("Generated valid MCQs:", len(valid_items))
+
+                  if len(valid_items) >= MIN_MCQS:
+                      final_result = {"items": valid_items}
+                      print("✅ Required MCQs generated successfully")
                       break
 
-                  print("⚠️ Gemini HTTP:", response.status_code)
-                  print(response.text[:1500])
+                  last_error = ValueError(
+                      f"Only {len(valid_items)} valid MCQs generated; minimum is {MIN_MCQS}"
+                  )
+                  print("⚠️", last_error)
 
-                  if response.status_code in [429, 500, 502, 503, 504]:
-                      wait_time = 10 * attempt
-                      print(f"⏳ Waiting {wait_time}s...")
-                      time.sleep(wait_time)
-                      continue
+              except (requests.RequestException, json.JSONDecodeError, ValueError) as exc:
+                  last_error = exc
+                  print("⚠️ MCQ generation/validation error:", str(exc))
 
-                  response.raise_for_status()
+              if attempt < MAX_ATTEMPTS:
+                  wait_time = min(5 * attempt, 30)
+                  print(f"⏳ Retrying MCQ generation after {wait_time}s...")
+                  time.sleep(wait_time)
 
-              except requests.RequestException as exc:
-                  print("⚠️ Gemini request error:", str(exc))
+          if final_result is None:
+              raise SystemExit(
+                  "❌ Valid Sujas MCQs generate नहीं हुए after "
+                  f"{MAX_ATTEMPTS} attempts. Last error: {last_error}"
+              )
 
-                  if attempt == MAX_ATTEMPTS:
-                      raise
-
-                  time.sleep(10 * attempt)
-
-          if gemini_data is None:
-              raise SystemExit("❌ Gemini failed after retries")
-
-          candidates = gemini_data.get("candidates", [])
-
-          if not candidates:
-              print(json.dumps(
-                  gemini_data,
-                  ensure_ascii=False,
-                  indent=2
-              )[:5000])
-              raise SystemExit("❌ Gemini candidate नहीं मिला")
-
-          parts = (
-              candidates[0]
-              .get("content", {})
-              .get("parts", [])
-          )
-
-          text = ""
-
-          for part in parts:
-              if "text" in part:
-                  text += part["text"]
-
-          if not text:
-              raise SystemExit("❌ Gemini response खाली है")
-
-          result = json.loads(text)
-          items = result.get("items", [])
-
-          print("Generated MCQs:", len(items))
-
-          if not items:
-              raise SystemExit("❌ कोई MCQ generate नहीं हुआ")
+          items = final_result["items"]
 
           Path("current_affairs.json").write_text(
               json.dumps(
-                  result,
+                  final_result,
                   ensure_ascii=False,
                   indent=2
               ),
@@ -651,7 +715,7 @@ jobs:
       - name: Save current affairs data
         if: steps.duplicate.outputs.new_sujas == 'true'
         run: |
-          git add             current_affairs.json             current_affairs_sujas_state.txt
+          git add current_affairs.json current_affairs_sujas_state.txt
 
           if git diff --cached --quiet; then
             echo "⏭️ Nothing to commit."
