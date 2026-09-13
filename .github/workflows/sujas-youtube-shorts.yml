@@ -43,8 +43,6 @@ jobs:
           pip install pillow google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
       - name: Build vertical Shorts video
-        env:
-          TELEGRAM_CHANNEL: ${{ env.TELEGRAM_CHANNEL }}
         run: |
           python - <<'PY'
           import json
@@ -151,7 +149,6 @@ jobs:
               ]
               make_slide(out / f"{i:03d}.png", str(item.get("category", "Current Affairs")), body)
 
-          # Final Telegram promotion slide.
           make_slide(
               out / "999.png",
               "📢 DAILY NOTES & CURRENT AFFAIRS",
@@ -172,33 +169,32 @@ jobs:
               f.write("duration 4\n")
               f.write("file 'youtube_frames/999.png'\n")
 
-          # Build the silent vertical video first.
           subprocess.run([
               "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
               "-vf", "format=yuv420p", "-r", "30", "-c:v", "libx264", "-preset", "veryfast",
               "-crf", "20", "-movflags", "+faststart", "sujas_silent.mp4"
           ], check=True)
 
-          # Create a simple original instrumental bed locally.
-          # This is not a commercial/trending song and avoids embedding copyrighted music.
-          duration = 65
+          # Generate a simple original instrumental bed with FFmpeg's built-in tone sources.
+          # It is not a commercial/trending song and does not download or embed copyrighted music.
           music_filter = (
-              "sine=frequency=261.63:duration=65[s1];"
-              "sine=frequency=329.63:duration=65[s2];"
-              "sine=frequency=392.00:duration=65[s3];"
-              "sine=frequency=523.25:duration=65[s4];"
+              "sine=frequency=261.63:duration=90[s1];"
+              "sine=frequency=329.63:duration=90[s2];"
+              "sine=frequency=392.00:duration=90[s3];"
+              "sine=frequency=523.25:duration=90[s4];"
               "[s1][s2][s3][s4]amix=inputs=4:duration=longest,"
-              "volume=0.035,afade=t=in:st=0:d=1,afade=t=out:st=62:d=3[a]"
+              "volume=0.035,afade=t=in:st=0:d=1,afade=t=out:st=87:d=3[a]"
           )
           subprocess.run([
-              "ffmpeg", "-y", "-f", "lavfi", "-i", music_filter,
-              "-map", "[a]", "-t", str(duration), "-c:a", "aac", "-b:a", "96k", "background_music.m4a"
+              "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+              "-filter_complex", music_filter, "-map", "[a]", "-t", "90",
+              "-c:a", "aac", "-b:a", "96k", "background_music.m4a"
           ], check=True)
 
-          # Mix music with the video and keep music very quiet under the MCQs.
+          # Mix the music under the video. The music is deliberately quiet.
           subprocess.run([
               "ffmpeg", "-y", "-i", "sujas_silent.mp4", "-i", "background_music.m4a",
-              "-filter_complex", "[1:a]volume=0.45[music];[music]adelay=0|0[m];[m]atrim=0:65[a]",
+              "-filter_complex", "[1:a]volume=0.45[a]",
               "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest",
               "-movflags", "+faststart", "sujas_current_affairs_short.mp4"
           ], check=True)
