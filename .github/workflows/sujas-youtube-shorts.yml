@@ -14,6 +14,9 @@ concurrency:
   group: sujas-youtube-shorts
   cancel-in-progress: false
 
+env:
+  TELEGRAM_CHANNEL: "https://t.me/yourbuddyravindrachoudhary"
+
 jobs:
   youtube:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
@@ -40,6 +43,8 @@ jobs:
           pip install pillow google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
 
       - name: Build vertical Shorts video
+        env:
+          TELEGRAM_CHANNEL: ${{ env.TELEGRAM_CHANNEL }}
         run: |
           python - <<'PY'
           import json
@@ -50,6 +55,7 @@ jobs:
           state_path = Path("current_affairs_sujas_state.txt")
           json_path = Path("current_affairs.json")
           yt_state_path = Path("youtube_sujas_state.txt")
+          telegram = "https://t.me/yourbuddyravindrachoudhary"
 
           if not state_path.exists():
               raise SystemExit("current_affairs_sujas_state.txt नहीं मिला")
@@ -145,6 +151,16 @@ jobs:
               ]
               make_slide(out / f"{i:03d}.png", str(item.get("category", "Current Affairs")), body)
 
+          # Final Telegram promotion slide.
+          make_slide(
+              out / "999.png",
+              "📢 DAILY NOTES & CURRENT AFFAIRS",
+              [("ऐसे ही रोज़ के Notes और MCQs के लिए", 44, False, (235,240,250)),
+               ("Telegram Channel से जुड़ें", 62, True, (255,255,255)),
+               (telegram, 38, True, (110,210,255))],
+              "https://t.me/yourbuddyravindrachoudhary"
+          )
+
           concat = Path("concat.txt")
           with concat.open("w", encoding="utf-8") as f:
               f.write("file 'youtube_frames/000.png'\n")
@@ -152,12 +168,39 @@ jobs:
               for i in range(1, len(items) + 1):
                   f.write(f"file 'youtube_frames/{i:03d}.png'\n")
                   f.write("duration 5.5\n")
-              f.write(f"file 'youtube_frames/{len(items):03d}.png'\n")
+              f.write("file 'youtube_frames/999.png'\n")
+              f.write("duration 4\n")
+              f.write("file 'youtube_frames/999.png'\n")
 
+          # Build the silent vertical video first.
           subprocess.run([
               "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat),
               "-vf", "format=yuv420p", "-r", "30", "-c:v", "libx264", "-preset", "veryfast",
-              "-crf", "20", "-movflags", "+faststart", "sujas_current_affairs_short.mp4"
+              "-crf", "20", "-movflags", "+faststart", "sujas_silent.mp4"
+          ], check=True)
+
+          # Create a simple original instrumental bed locally.
+          # This is not a commercial/trending song and avoids embedding copyrighted music.
+          duration = 65
+          music_filter = (
+              "sine=frequency=261.63:duration=65[s1];"
+              "sine=frequency=329.63:duration=65[s2];"
+              "sine=frequency=392.00:duration=65[s3];"
+              "sine=frequency=523.25:duration=65[s4];"
+              "[s1][s2][s3][s4]amix=inputs=4:duration=longest,"
+              "volume=0.035,afade=t=in:st=0:d=1,afade=t=out:st=62:d=3[a]"
+          )
+          subprocess.run([
+              "ffmpeg", "-y", "-f", "lavfi", "-i", music_filter,
+              "-map", "[a]", "-t", str(duration), "-c:a", "aac", "-b:a", "96k", "background_music.m4a"
+          ], check=True)
+
+          # Mix music with the video and keep music very quiet under the MCQs.
+          subprocess.run([
+              "ffmpeg", "-y", "-i", "sujas_silent.mp4", "-i", "background_music.m4a",
+              "-filter_complex", "[1:a]volume=0.45[music];[music]adelay=0|0[m];[m]atrim=0:65[a]",
+              "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-shortest",
+              "-movflags", "+faststart", "sujas_current_affairs_short.mp4"
           ], check=True)
           PY
 
@@ -193,11 +236,17 @@ jobs:
           youtube = build("youtube", "v3", credentials=creds)
 
           state = Path("current_affairs_sujas_state.txt").read_text(encoding="utf-8").strip()
+          telegram = "https://t.me/yourbuddyravindrachoudhary"
           body = {
               "snippet": {
-                  "title": "Sujas Current Affairs | 10 Important MCQs | Rajasthan",
-                  "description": "राजस्थान प्रतियोगी परीक्षाओं के लिए Sujas Current Affairs के महत्वपूर्ण MCQs।\n\n#Sujas #RajasthanCurrentAffairs #RajasthanGK #CurrentAffairs #Shorts",
-                  "tags": ["Sujas", "Rajasthan Current Affairs", "Rajasthan GK", "Current Affairs", "RPSC", "RSSB", "Shorts"],
+                  "title": "Sujas Current Affairs | 10 Important MCQs | Rajasthan #Shorts",
+                  "description": (
+                      "राजस्थान प्रतियोगी परीक्षाओं के लिए Sujas Current Affairs के महत्वपूर्ण MCQs।\n\n"
+                      "📚 रोज़ के Notes और Current Affairs के लिए Telegram Channel:\n"
+                      f"{telegram}\n\n"
+                      "#Sujas #RajasthanCurrentAffairs #RajasthanGK #CurrentAffairs #RPSC #RSSB #Shorts"
+                  ),
+                  "tags": ["Sujas", "Rajasthan Current Affairs", "Rajasthan GK", "Current Affairs", "RPSC", "RSSB", "Shorts", "Telegram"],
                   "categoryId": "27",
                   "defaultLanguage": "hi"
               },
