@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-15T19:24:28.810304+00:00"
+    "generated_at": "2026-09-15T19:51:26.775276+00:00"
   },
   "sources": [
     {
@@ -43,9 +43,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/rpscranker/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
