@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-16T09:53:30.008537+00:00"
+    "generated_at": "2026-09-16T10:27:21.557342+00:00"
   },
   "sources": [
     {
@@ -19,9 +19,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/success_academy_hmh/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
