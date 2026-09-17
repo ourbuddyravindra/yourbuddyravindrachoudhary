@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-17T20:50:06.093620+00:00"
+    "generated_at": "2026-09-17T21:24:52.189158+00:00"
   },
   "sources": [
     {
@@ -37,9 +37,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/smartstudyplus2/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
