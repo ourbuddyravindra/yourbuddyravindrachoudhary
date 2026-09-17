@@ -26,7 +26,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -47,7 +47,6 @@ jobs:
 
           API_URL = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
           FORCE = os.environ.get("FORCE", "false").lower() == "true"
-
           payload = {
               "AdmDepartmentCode": 0,
               "AttachmentList": [],
@@ -59,14 +58,7 @@ jobs:
               "EntryToDate": "",
               "FromDate": "",
               "Id": 0,
-              "IndexModel": {
-                  "AdvanceSearchModel": {},
-                  "PageSize": 50,
-                  "IsPostBack": False,
-                  "OrderByAsc": 0,
-                  "Search": None,
-                  "OrderBy": None
-              },
+              "IndexModel": {"AdvanceSearchModel": {}, "PageSize": 50, "IsPostBack": False, "OrderByAsc": 0, "Search": None, "OrderBy": None},
               "IndividualBeneficiaryScheme": "",
               "IsImagesRequired": True,
               "IsLatest": -1,
@@ -123,14 +115,10 @@ jobs:
                       return str(value).strip()
               return ""
 
-          def date_score(record, title):
-              text = " ".join(str(v) for v in record.values() if isinstance(v, (str, int, float))) if isinstance(record, dict) else title
-              patterns = [
-                  r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})",
-                  r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})"
-              ]
+          def date_score(record):
+              text = " ".join(str(v) for v in record.values() if isinstance(v, (str, int, float)))
               dates = []
-              for pattern in patterns:
+              for pattern in [r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})"]:
                   for m in re.finditer(pattern, text):
                       try:
                           if len(m.group(1)) == 4:
@@ -145,12 +133,7 @@ jobs:
           for attempt in range(1, 7):
               print(f"DIPR API attempt {attempt}/6")
               try:
-                  response = requests.post(
-                      API_URL,
-                      json=payload,
-                      headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Content-Type": "application/json"},
-                      timeout=(45, 150)
-                  )
+                  response = requests.post(API_URL, json=payload, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json", "Content-Type": "application/json"}, timeout=(45, 150))
                   print("DIPR HTTP:", response.status_code)
                   if response.status_code == 200:
                       break
@@ -163,8 +146,7 @@ jobs:
                       raise SystemExit(f"DIPR request failed: {exc}")
                   time.sleep(min(15 * attempt, 60))
 
-          data = response.json()
-          records = get_items(data)
+          records = get_items(response.json())
           if not records:
               raise SystemExit("DIPR में records नहीं मिले")
 
@@ -174,12 +156,9 @@ jobs:
                   continue
               title = title_of(record)
               pdf_url = find_pdf(record)
-              if not pdf_url:
-                  continue
-              if not ("sujas" in title.lower() or "सुजस" in title):
-                  continue
-              order_id = id_of(record)
-              candidates.append((date_score(record, title), int(order_id) if order_id.isdigit() else -1, title, order_id, pdf_url))
+              if pdf_url and ("sujas" in title.lower() or "सुजस" in title):
+                  order_id = id_of(record)
+                  candidates.append((date_score(record), int(order_id) if order_id.isdigit() else -1, title, order_id, pdf_url))
 
           if not candidates:
               raise SystemExit("Sujas PDF नहीं मिली")
@@ -187,20 +166,15 @@ jobs:
           candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
           _, _, title, order_id, pdf_url = candidates[0]
           current_key = f"{order_id}|{pdf_url}"
-
           print("Sujas candidates:", len(candidates))
           print("LATEST TITLE:", title)
           print("LATEST ORDER ID:", order_id)
           print("LATEST PDF:", pdf_url)
-          print("CURRENT KEY:", current_key)
 
           state_file = Path("current_affairs_sujas_state.txt")
           old_state = state_file.read_text(encoding="utf-8").strip() if state_file.exists() else ""
-
-          # Backward compatible with the old state file that stored only order_id.
           old_id = old_state.split("|", 1)[0].strip() if old_state else ""
           same = bool(order_id and old_id and old_id == order_id)
-
           if same and "|" in old_state:
               same = old_state == current_key
 
@@ -211,16 +185,11 @@ jobs:
                   out.write(f"current_key={current_key}\n")
               raise SystemExit(0)
 
-          print("NEW SUJAS / FORCE PROCESSING")
           pdf_response = None
           for attempt in range(1, 5):
               print(f"PDF download attempt {attempt}/4")
               try:
-                  pdf_response = requests.get(
-                      pdf_url,
-                      headers={"User-Agent": "Mozilla/5.0", "Accept": "application/pdf,*/*"},
-                      timeout=(45, 180)
-                  )
+                  pdf_response = requests.get(pdf_url, headers={"User-Agent": "Mozilla/5.0", "Accept": "application/pdf,*/*"}, timeout=(45, 180))
                   print("PDF HTTP:", pdf_response.status_code)
                   if pdf_response.status_code == 200:
                       break
@@ -236,13 +205,12 @@ jobs:
           pdf_bytes = pdf_response.content
           if not pdf_bytes.startswith(b"%PDF"):
               raise SystemExit("Downloaded file PDF format में नहीं है")
-
           Path("sujas_current.pdf").write_bytes(pdf_bytes)
           print("PDF size:", len(pdf_bytes), "bytes")
 
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
               out.write("new_sujas=true\n")
-              out.write(f"pdf_path=sujas_current.pdf\n")
+              out.write("pdf_path=sujas_current.pdf\n")
               out.write(f"pdf_url={pdf_url}\n")
               out.write(f"order_id={order_id}\n")
               out.write(f"title={title}\n")
@@ -256,14 +224,13 @@ jobs:
           CURRENT_AFFAIRS_BOT_TOKEN: ${{ secrets.CURRENT_AFFAIRS_BOT_TOKEN }}
           TELEGRAM_CHANNEL: "@yourbuddyravindrachoudhary"
           PDF_PATH: ${{ steps.find_pdf.outputs.pdf_path }}
-          PDF_URL: ${{ steps.find_pdf.outputs.pdf_url }}
-          ORDER_ID: ${{ steps.find_pdf.outputs.order_id }}
           CURRENT_KEY: ${{ steps.find_pdf.outputs.current_key }}
         run: |
           python - <<'PY'
           import base64
           import json
           import os
+          import random
           import time
           import requests
           from pathlib import Path
@@ -272,124 +239,107 @@ jobs:
           BOT_TOKEN = os.environ["CURRENT_AFFAIRS_BOT_TOKEN"]
           CHANNEL = os.environ["TELEGRAM_CHANNEL"]
           PDF_PATH = Path(os.environ["PDF_PATH"])
-          ORDER_ID = os.environ.get("ORDER_ID", "")
           CURRENT_KEY = os.environ.get("CURRENT_KEY", "")
 
-          pdf_bytes = PDF_PATH.read_bytes()
-          pdf_base64 = base64.b64encode(pdf_bytes).decode("utf-8")
+          pdf_base64 = base64.b64encode(PDF_PATH.read_bytes()).decode("utf-8")
 
           prompt = r"""
           तुम Rajasthan competitive examinations के लिए Current Affairs expert हो।
           संलग्न PDF ही एकमात्र source है। PDF के बाहर का कोई fact, अनुमान या सामान्य ज्ञान मत जोड़ो।
-
           PDF से कम से कम 10 अलग और valid MCQs बनाओ, लेकिन केवल तभी जब PDF में कम से कम 10 exam-relevant facts उपलब्ध हों।
           राजस्थान से संबंधित तथ्य प्राथमिकता में रखो। Duplicate या लगभग समान प्रश्न मत बनाओ।
-          हर प्रश्न के ठीक 4 विकल्प हों और केवल एक सही उत्तर हो।
-          answer केवल A, B, C या D हो। explanation केवल PDF के तथ्य पर आधारित हो।
-          page उपलब्ध हो तो page number दो, नहीं हो तो "N/A" दो। source हमेशा "Sujas" रखो।
+          हर प्रश्न के ठीक 4 विकल्प हों और केवल एक सही उत्तर हो। answer केवल A, B, C या D हो।
+          explanation केवल PDF के तथ्य पर आधारित हो। page उपलब्ध हो तो page number दो, नहीं हो तो N/A दो। source हमेशा Sujas रखो।
           भाषा साफ और शुद्ध हिंदी हो।
-
           केवल JSON दो:
-          {"items":[
-            {"category":"...","question":"...","option_a":"...","option_b":"...","option_c":"...","option_d":"...","answer":"A","explanation":"...","page":"...","source":"Sujas"}
-          ]}
+          {"items":[{"category":"...","question":"...","option_a":"...","option_b":"...","option_c":"...","option_d":"...","answer":"A","explanation":"...","page":"...","source":"Sujas"}]}
           """
 
           schema = {
               "type": "object",
-              "properties": {
-                  "items": {
-                      "type": "array",
-                      "items": {
-                          "type": "object",
-                          "properties": {
-                              "category": {"type": "string"},
-                              "question": {"type": "string"},
-                              "option_a": {"type": "string"},
-                              "option_b": {"type": "string"},
-                              "option_c": {"type": "string"},
-                              "option_d": {"type": "string"},
-                              "answer": {"type": "string"},
-                              "explanation": {"type": "string"},
-                              "page": {"type": "string"},
-                              "source": {"type": "string"}
-                          },
-                          "required": ["category","question","option_a","option_b","option_c","option_d","answer","explanation","page","source"]
-                      }
-                  }
-              },
+              "properties": {"items": {"type": "array", "items": {"type": "object", "properties": {
+                  "category": {"type": "string"}, "question": {"type": "string"},
+                  "option_a": {"type": "string"}, "option_b": {"type": "string"},
+                  "option_c": {"type": "string"}, "option_d": {"type": "string"},
+                  "answer": {"type": "string"}, "explanation": {"type": "string"},
+                  "page": {"type": "string"}, "source": {"type": "string"}
+              }, "required": ["category","question","option_a","option_b","option_c","option_d","answer","explanation","page","source"]}}},
               "required": ["items"]
           }
 
-          model = "gemini-3.7-flash"
-          url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-
-          payload = {
-              "contents": [{"parts": [
-                  {"text": prompt},
-                  {"inline_data": {"mime_type": "application/pdf", "data": pdf_base64}}
-              ]}],
-              "generationConfig": {
-                  "responseMimeType": "application/json",
-                  "responseSchema": schema,
-                  "temperature": 0.1
-              }
-          }
-
+          # Stable production models. If one model is temporarily overloaded (503),
+          # automatically move to the next model instead of failing the whole bot.
+          models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.6-flash"]
           final_items = None
           last_error = None
 
-          for attempt in range(1, 7):
-              print(f"Gemini attempt {attempt}/6")
-              try:
-                  r = requests.post(
-                      url,
-                      headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"},
-                      json=payload,
-                      timeout=300
-                  )
-                  print("Gemini HTTP:", r.status_code)
-                  if r.status_code in [429,500,502,503,504]:
-                      last_error = r.text[:1000]
-                      time.sleep(min(10 * attempt, 60))
+          def valid_items(result):
+              items = result.get("items", []) if isinstance(result, dict) else []
+              if not isinstance(items, list):
+                  return []
+              valid = []
+              seen = set()
+              fields = ["category","question","option_a","option_b","option_c","option_d","answer","explanation","page","source"]
+              for item in items:
+                  if not isinstance(item, dict) or not all(str(item.get(f, "")).strip() for f in fields):
                       continue
-                  r.raise_for_status()
-                  data = r.json()
-                  parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                  text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
-                  result = json.loads(text)
-                  items = result.get("items", [])
-                  if not isinstance(items, list):
-                      raise ValueError("items array missing")
+                  if str(item.get("source", "")).strip().lower() != "sujas":
+                      continue
+                  if str(item.get("answer", "")).strip().upper() not in {"A","B","C","D"}:
+                      continue
+                  q = str(item["question"]).strip()
+                  if q in seen:
+                      continue
+                  seen.add(q)
+                  valid.append(item)
+              return valid
 
-                  valid = []
-                  seen = set()
-                  for item in items:
-                      if not isinstance(item, dict):
-                          continue
-                      fields = ["category","question","option_a","option_b","option_c","option_d","answer","explanation","page","source"]
-                      if not all(str(item.get(f, "")).strip() for f in fields):
-                          continue
-                      if str(item.get("source", "")).strip().lower() != "sujas":
-                          continue
-                      if str(item.get("answer", "")).strip().upper() not in {"A","B","C","D"}:
-                          continue
-                      q = str(item["question"]).strip()
-                      if q in seen:
-                          continue
-                      seen.add(q)
-                      valid.append(item)
+          for model in models:
+              url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+              payload = {
+                  "contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "application/pdf", "data": pdf_base64}}]}],
+                  "generationConfig": {"responseMimeType": "application/json", "responseSchema": schema, "temperature": 0.1}
+              }
 
-                  print("Valid MCQs:", len(valid))
-                  if len(valid) >= 10:
-                      final_items = valid
+              print(f"\n===== Gemini model: {model} =====")
+              model_success = False
+              for attempt in range(1, 4):
+                  print(f"Gemini {model} attempt {attempt}/3")
+                  try:
+                      r = requests.post(url, headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"}, json=payload, timeout=300)
+                      print("Gemini HTTP:", r.status_code)
+                      if r.status_code in [429, 500, 502, 503, 504]:
+                          last_error = r.text[:1000]
+                          if attempt < 3:
+                              delay = min(8 * (2 ** (attempt - 1)) + random.uniform(0, 3), 45)
+                              print(f"Temporary Gemini error. Waiting {delay:.1f}s before retry...")
+                              time.sleep(delay)
+                              continue
+                          print(f"Model {model} exhausted; switching to next model.")
+                          break
+                      r.raise_for_status()
+                      data = r.json()
+                      parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+                      text = "".join(p.get("text", "") for p in parts if isinstance(p, dict)).strip()
+                      result = json.loads(text)
+                      valid = valid_items(result)
+                      print("Valid MCQs:", len(valid))
+                      if len(valid) >= 10:
+                          final_items = valid
+                          model_success = True
+                          break
+                      last_error = f"Only {len(valid)} valid MCQs returned by {model}"
+                      if attempt < 3:
+                          time.sleep(5 * attempt)
+                  except (requests.RequestException, ValueError, json.JSONDecodeError, KeyError, IndexError) as exc:
+                      last_error = str(exc)
+                      print("Gemini/validation error:", last_error)
+                      if attempt < 3:
+                          time.sleep(5 * attempt)
+                  if model_success:
                       break
-                  last_error = f"Only {len(valid)} valid MCQs"
-              except (requests.RequestException, ValueError, json.JSONDecodeError, KeyError, IndexError) as exc:
-                  last_error = str(exc)
-                  print("Validation error:", last_error)
-              if attempt < 6:
-                  time.sleep(min(5 * attempt, 30))
+              if final_items is not None:
+                  break
 
           if final_items is None:
               raise SystemExit(f"Valid MCQs नहीं बने. Last error: {last_error}")
@@ -398,32 +348,21 @@ jobs:
 
           telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
           sent = 0
-
           for index, item in enumerate(final_items, 1):
               message = (
                   "📰 <b>राजस्थान करेंट अफेयर्स</b>\n"
                   "━━━━━━━━━━━━━━━━━━\n\n"
                   f"🏷️ <b>Category:</b> {item['category']}\n\n"
                   f"<b>प्रश्न {index}.</b> {item['question']}\n\n"
-                  f"(A) {item['option_a']}\n"
-                  f"(B) {item['option_b']}\n"
-                  f"(C) {item['option_c']}\n"
-                  f"(D) {item['option_d']}\n\n"
+                  f"(A) {item['option_a']}\n(B) {item['option_b']}\n(C) {item['option_c']}\n(D) {item['option_d']}\n\n"
                   f"✅ <b>उत्तर:</b> {item['answer']}\n\n"
                   f"💡 <b>व्याख्या:</b> {item['explanation']}\n\n"
                   f"📄 <b>Page:</b> {item['page']}\n\n"
-                  "━━━━━━━━━━━━━━━━━━\n"
-                  "📚 Source: <b>Sujas</b>\n"
-                  "📢 <b>@yourbuddyravindrachoudhary</b>"
+                  "━━━━━━━━━━━━━━━━━━\n📚 Source: <b>Sujas</b>\n📢 <b>@yourbuddyravindrachoudhary</b>"
               )
               if len(message) > 4000:
                   message = message[:3950] + "\n\n…"
-
-              response = requests.post(
-                  telegram_url,
-                  json={"chat_id": CHANNEL, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True},
-                  timeout=30
-              )
+              response = requests.post(telegram_url, json={"chat_id": CHANNEL, "text": message, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=30)
               response.raise_for_status()
               if not response.json().get("ok"):
                   raise SystemExit(f"Telegram error: {response.text[:1000]}")
@@ -431,7 +370,6 @@ jobs:
               print(f"Telegram message {index} sent")
               time.sleep(0.5)
 
-          # Write state only AFTER every Telegram message succeeds.
           Path("current_affairs_sujas_state.txt").write_text(CURRENT_KEY, encoding="utf-8")
           print("COMPLETE — MCQs:", len(final_items), "TELEGRAM SENT:", sent)
           PY
@@ -446,5 +384,7 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "Generate Sujas current affairs"
-            git push
+            git fetch origin main
+            git rebase origin/main
+            git push origin HEAD:main
           fi
