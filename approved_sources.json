@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-18T17:49:57.239967+00:00"
+    "generated_at": "2026-09-18T18:27:31.894588+00:00"
   },
   "sources": [
     {
@@ -31,9 +31,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/testboard_rajasthan/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
