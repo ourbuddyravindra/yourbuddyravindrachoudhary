@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-21T08:52:22.531632+00:00"
+    "generated_at": "2026-09-21T09:27:00.874704+00:00"
   },
   "sources": [
     {
@@ -25,9 +25,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/exams_shorts/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "instagram",
