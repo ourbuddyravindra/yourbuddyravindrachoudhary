@@ -5,6 +5,8 @@ on:
     workflows:
       - "Rajasthan Sujas Auto Upload"
     types: [completed]
+  schedule:
+    - cron: '0 5,10,15 * * *'
   workflow_dispatch:
     inputs:
       force:
@@ -24,6 +26,7 @@ jobs:
   process:
     if: >-
       github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 40
