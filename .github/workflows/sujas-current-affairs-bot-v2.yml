@@ -269,7 +269,27 @@ jobs:
 
           # Stable production models. If one model is temporarily overloaded (503),
           # automatically move to the next model instead of failing the whole bot.
-          models = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3.6-flash"]
+          # Discover models available to THIS API key; never retry unavailable 404 models.
+          catalog = requests.get(
+              "https://generativelanguage.googleapis.com/v1beta/models",
+              headers={"x-goog-api-key": API_KEY}, timeout=45
+          )
+          catalog.raise_for_status()
+          available = [
+              m["name"].split("/", 1)[-1]
+              for m in catalog.json().get("models", [])
+              if "generateContent" in m.get("supportedGenerationMethods", [])
+              and "gemini" in m.get("name", "").lower()
+              and "embedding" not in m.get("name", "").lower()
+          ]
+          preferred = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite",
+                       "gemini-3-flash-preview", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+          models = [m for m in preferred if m in available]
+          models += [m for m in available if m not in models and "flash" in m.lower()]
+          print("Available Gemini models:", available)
+          print("Fallback models:", models)
+          if not models:
+              raise SystemExit("No compatible Gemini generateContent models available for this API key.")
           final_items = None
           last_error = None
 
@@ -308,7 +328,7 @@ jobs:
                   try:
                       r = requests.post(url, headers={"x-goog-api-key": API_KEY, "Content-Type": "application/json"}, json=payload, timeout=300)
                       print("Gemini HTTP:", r.status_code)
-                      if r.status_code in [429, 500, 502, 503, 504]:
+                      if r.status_code == 404:\n                          print(f"Model {model} unavailable (404); trying next model.")\n                          last_error = r.text[:500]\n                          break\n                      if r.status_code in [429, 500, 502, 503, 504]:
                           last_error = r.text[:1000]
                           if attempt < 3:
                               delay = min(8 * (2 ** (attempt - 1)) + random.uniform(0, 3), 45)
