@@ -1,14 +1,15 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-09-26T09:25:04.704316+00:00"
+    "generated_at": "2026-09-26T09:50:33.377343+00:00"
   },
   "sources": [
     {
       "type": "instagram",
       "url": "https://www.instagram.com/shiv_kumar8094/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
@@ -31,8 +32,9 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/testboard_rajasthan/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
@@ -67,9 +69,8 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/kumargaurav5555/",
-      "status": "public_page_reachable",
-      "http_status": 200,
-      "title": "Instagram"
+      "status": "not_reliably_accessible",
+      "http_status": 429
     },
     {
       "type": "youtube",
