@@ -1,7 +1,7 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-10-23T15:03:10.661665+00:00"
+    "generated_at": "2026-10-23T19:12:03.433067+00:00"
   },
   "sources": [
     {
@@ -89,7 +89,7 @@
       "latest_rajasthan_video": {
         "video_id": "XYSaVe6t2io",
         "title": "23 October 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
-        "published_at": "2026-10-21T08:28:32Z",
+        "published_at": "2026-10-23T17:14:31Z",
         "url": "https://www.youtube.com/watch?v=XYSaVe6t2io"
       }
     }
@@ -101,7 +101,7 @@
       "source_url": "https://youtube.com/@meridian.academy",
       "video_id": "XYSaVe6t2io",
       "title": "23 October 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
-      "published_at": "2026-10-21T08:28:32Z",
+      "published_at": "2026-10-23T17:14:31Z",
       "url": "https://www.youtube.com/watch?v=XYSaVe6t2io",
       "content_status": "metadata_only",
       "note": "Public YouTube metadata available. Video transcript is not assumed."
