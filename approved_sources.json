@@ -1,50 +1,57 @@
 {
   "collector": {
     "name": "Approved Current Affairs Collector",
-    "generated_at": "2026-11-03T00:02:03.525264+00:00"
+    "generated_at": "2026-11-03T06:45:04.676970+00:00"
   },
   "sources": [
     {
       "type": "instagram",
       "url": "https://www.instagram.com/shiv_kumar8094/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/neerajsircurrentaffairs/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/success_academy_hmh/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/exams_shorts/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/testboard_rajasthan/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/smartstudyplus2/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/rpscranker/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
@@ -56,20 +63,23 @@
     {
       "type": "instagram",
       "url": "https://www.instagram.com/noteshubgk/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/diprrajasthan/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "instagram",
       "url": "https://www.instagram.com/kumargaurav5555/",
-      "status": "not_reliably_accessible",
-      "http_status": 429
+      "status": "public_page_reachable",
+      "http_status": 200,
+      "title": "Instagram"
     },
     {
       "type": "youtube",
@@ -77,10 +87,10 @@
       "url": "https://youtube.com/@meridian.academy",
       "status": "success",
       "latest_rajasthan_video": {
-        "video_id": "Jiensc5nx60",
-        "title": "02 Nov 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
-        "published_at": "2026-11-02T18:10:54Z",
-        "url": "https://www.youtube.com/watch?v=Jiensc5nx60"
+        "video_id": "vE_qC2KOuOA",
+        "title": "3 Nov 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
+        "published_at": "2026-10-31T06:17:11Z",
+        "url": "https://www.youtube.com/watch?v=vE_qC2KOuOA"
       }
     }
   ],
@@ -89,10 +99,10 @@
       "type": "youtube",
       "source": "Meridian Academy",
       "source_url": "https://youtube.com/@meridian.academy",
-      "video_id": "Jiensc5nx60",
-      "title": "02 Nov 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
-      "published_at": "2026-11-02T18:10:54Z",
-      "url": "https://www.youtube.com/watch?v=Jiensc5nx60",
+      "video_id": "vE_qC2KOuOA",
+      "title": "3 Nov 2026 Rajasthan Current Affairs | SUJAS सारांश | RPSC, RSSB | Meridian Academy",
+      "published_at": "2026-10-31T06:17:11Z",
+      "url": "https://www.youtube.com/watch?v=vE_qC2KOuOA",
       "content_status": "metadata_only",
       "note": "Public YouTube metadata available. Video transcript is not assumed."
     }
