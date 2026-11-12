@@ -8,9 +8,13 @@ on:
     - cron: '17 0 * * *'
       timezone: 'Asia/Kolkata'
 
+permissions:
+  contents: write
+
 jobs:
   sujas:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -22,21 +26,27 @@ jobs:
           python-version: '3.12'
 
       - name: Install requests
-        run: pip install requests
+        run: python -m pip install --upgrade requests
 
-      - name: Check and upload Sujas
+      - name: Check and upload latest Sujas
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           python - <<'PY'
           import os
-          import requests
           import re
+          import sys
+          from datetime import datetime
+          from urllib.parse import urljoin
+          import requests
 
-          BOT_TOKEN = os.environ["BOT_TOKEN"]
+          BOT_TOKEN = os.environ.get("BOT_TOKEN", "").strip()
           CHANNEL = "@yourbuddyravindrachoudhary"
-
           API = "https://dipr.rajasthan.gov.in/webapi/api/OrderPortal/GetAll"
+          STATE_FILE = "latest_sujas_key.txt"
+
+          if not BOT_TOKEN:
+              raise RuntimeError("BOT_TOKEN GitHub secret is missing or empty")
 
           payload = {
               "AdmDepartmentCode": 0,
@@ -51,7 +61,7 @@ jobs:
               "Id": 0,
               "IndexModel": {
                   "AdvanceSearchModel": {},
-                  "PageSize": 50,
+                  "PageSize": 100,
                   "IsPostBack": False,
                   "OrderByAsc": 0,
                   "Search": None,
@@ -72,159 +82,155 @@ jobs:
               "Type": "10"
           }
 
-          print("🔎 Sujas check ho raha hai...")
+          session = requests.Session()
+          session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; SujasAutoUpload/1.0)"})
 
-          r = requests.post(API, json=payload, timeout=60)
-          r.raise_for_status()
-          data = r.json()
+          print("Fetching Sujas records from Rajasthan DIPR...")
+          response = session.post(API, json=payload, timeout=(20, 90))
+          response.raise_for_status()
+          data = response.json()
 
-          def find_pdf(obj):
+          def walk(obj):
               if isinstance(obj, dict):
+                  yield obj
                   for value in obj.values():
-                      if isinstance(value, str):
-                          if ".pdf" in value.lower() and value.startswith("http"):
-                              return value
-                      result = find_pdf(value)
-                      if result:
-                          return result
-
+                      yield from walk(value)
               elif isinstance(obj, list):
-                  for item in obj:
-                      result = find_pdf(item)
-                      if result:
-                          return result
+                  for value in obj:
+                      yield from walk(value)
 
-              return None
+          def first_value(record, keys):
+              for key in keys:
+                  value = record.get(key)
+                  if value not in (None, ""):
+                      return value
+              return ""
 
-          def find_records(obj):
-              records = []
+          def find_pdf_url(obj):
+              found = []
+              for item in walk(obj):
+                  for key, value in item.items():
+                      if not isinstance(value, str):
+                          continue
+                      value = value.strip()
+                      if ".pdf" not in value.lower():
+                          continue
+                      if value.startswith("//"):
+                          value = "https:" + value
+                      elif value.startswith("/"):
+                          value = urljoin("https://dipr.rajasthan.gov.in", value)
+                      if value.lower().startswith(("http://", "https://")):
+                          found.append(value)
+              # Prefer the direct PDF attachment URL and remove duplicate URLs.
+              return list(dict.fromkeys(found))
 
-              if isinstance(obj, list):
-                  for item in obj:
-                      if isinstance(item, dict):
-                          records.append(item)
-                      records.extend(find_records(item))
+          records = []
+          seen = set()
+          for record in walk(data):
+              title = str(first_value(record, ("Title", "title", "Subject", "subject", "Name", "name"))).strip()
+              if not title or not ("sujas" in title.lower() or "सुजस" in title):
+                  continue
+              urls = find_pdf_url(record)
+              if not urls:
+                  continue
+              ident = str(first_value(record, ("Id", "ID", "OrderId", "orderId", "id"))).strip()
+              date_text = str(first_value(record, (
+                  "PublishDate", "PublicationDate", "EntryDate", "CreatedDate",
+                  "CreatedOn", "Date", "OrderDate", "UpdatedDate"
+              ))).strip()
+              signature = (ident, title, urls[0])
+              if signature in seen:
+                  continue
+              seen.add(signature)
+              records.append({
+                  "id": ident,
+                  "title": title,
+                  "url": urls[0],
+                  "date": date_text
+              })
 
-              elif isinstance(obj, dict):
-                  for value in obj.values():
-                      if isinstance(value, (dict, list)):
-                          records.extend(find_records(value))
+          if not records:
+              print("Top-level response keys:", list(data.keys()) if isinstance(data, dict) else type(data).__name__)
+              raise RuntimeError("No Sujas record with a PDF attachment was found in the DIPR API response")
 
-              return records
+          def sort_key(item):
+              date_value = item["date"]
+              parsed = 0.0
+              if date_value:
+                  try:
+                      parsed = datetime.fromisoformat(date_value.replace("Z", "+00:00")).timestamp()
+                  except Exception:
+                      try:
+                          parsed = datetime.strptime(date_value[:10], "%d/%m/%Y").timestamp()
+                      except Exception:
+                          pass
+              numeric_id = int(item["id"]) if item["id"].isdigit() else 0
+              return (parsed, numeric_id)
 
-          records = find_records(data)
+          records.sort(key=sort_key, reverse=True)
+          latest = records[0]
+          current_key = latest["id"] + "|" + latest["url"]
 
-          print("📦 Records:", len(records))
-
-          sujas = []
-
-          for record in records:
-              title = str(
-                  record.get("Title")
-                  or record.get("title")
-                  or ""
-              )
-
-              pdf = find_pdf(record)
-
-              if pdf and (
-                  "sujas" in title.lower()
-                  or "सुजस" in title
-              ):
-                  sujas.append((record, title, pdf))
-
-          if not sujas:
-              raise Exception("❌ Sujas PDF नहीं मिली")
-
-          # API सामान्यतः newest पहले देता है
-          latest, title, pdf_url = sujas[0]
-
-          order_id = str(
-              latest.get("Id")
-              or latest.get("ID")
-              or latest.get("OrderId")
-              or latest.get("orderId")
-              or ""
-          )
-
-          print("📰 Title:", title)
-          print("🆔 ID:", order_id)
-          print("📄 PDF:", pdf_url)
-
-          current_key = order_id + "|" + pdf_url
-
-          state_file = "latest_sujas_key.txt"
+          print("Candidate Sujas PDFs:", len(records))
+          print("Selected title:", latest["title"])
+          print("Selected ID:", latest["id"] or "(not supplied by API)")
+          print("Selected attachment:", latest["url"])
 
           old_key = ""
-
-          if os.path.exists(state_file):
-              with open(state_file, "r", encoding="utf-8") as f:
-                  old_key = f.read().strip()
+          if os.path.exists(STATE_FILE):
+              with open(STATE_FILE, "r", encoding="utf-8") as state:
+                  old_key = state.read().strip()
 
           if old_key == current_key:
-              print("⏭️ यह Sujas पहले ही upload हो चुकी है.")
-              raise SystemExit(0)
+              print("This Sujas PDF has already been uploaded. Nothing to do.")
+              sys.exit(0)
 
-          print("⬇️ PDF download हो रही है...")
-
-          pdf = requests.get(
-              pdf_url,
-              timeout=180,
-              headers={"User-Agent": "Mozilla/5.0"}
-          )
-
-          pdf.raise_for_status()
-
-          with open("sujas.pdf", "wb") as f:
-              f.write(pdf.content)
-
-          print("📦 PDF size:", len(pdf.content), "bytes")
-
-          print("📤 Telegram पर upload हो रही है...")
-
-          telegram_url = (
-              f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
-          )
-
-          with open("sujas.pdf", "rb") as f:
-              response = requests.post(
-                  telegram_url,
-                  data={
-                      "chat_id": CHANNEL,
-                      "caption": f"📚 {title}"
-                  },
-                  files={
-                      "document": (
-                          "sujas.pdf",
-                          f,
-                          "application/pdf"
-                      )
-                  },
-                  timeout=240
+          print("Downloading the selected PDF...")
+          pdf_response = session.get(latest["url"], timeout=(20, 180), allow_redirects=True)
+          pdf_response.raise_for_status()
+          pdf_bytes = pdf_response.content
+          if len(pdf_bytes) < 1000 or b"%PDF-" not in pdf_bytes[:1024]:
+              content_type = pdf_response.headers.get("Content-Type", "unknown")
+              raise RuntimeError(
+                  f"Attachment is not a valid PDF (size={len(pdf_bytes)}, content-type={content_type})"
               )
 
-          response.raise_for_status()
+          with open("sujas.pdf", "wb") as pdf_file:
+              pdf_file.write(pdf_bytes)
+          print("PDF downloaded:", len(pdf_bytes), "bytes")
 
-          result = response.json()
+          print("Uploading PDF to Telegram channel...")
+          telegram_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+          with open("sujas.pdf", "rb") as pdf_file:
+              telegram_response = session.post(
+                  telegram_url,
+                  data={"chat_id": CHANNEL, "caption": f"📚 {latest['title']}"},
+                  files={"document": ("Sujas.pdf", pdf_file, "application/pdf")},
+                  timeout=(30, 240)
+              )
 
-          if not result.get("ok"):
-              raise Exception(result)
+          telegram_response.raise_for_status()
+          telegram_result = telegram_response.json()
+          if not telegram_result.get("ok"):
+              raise RuntimeError(f"Telegram upload failed: {telegram_result}")
 
-          print("🎉 Sujas successfully Telegram पर upload हो गई!")
+          message_id = telegram_result.get("result", {}).get("message_id")
+          print("Upload successful. Telegram message ID:", message_id)
 
-          with open(state_file, "w", encoding="utf-8") as f:
-              f.write(current_key)
-
+          # Update deduplication state only after Telegram confirms success.
+          with open(STATE_FILE, "w", encoding="utf-8") as state:
+              state.write(current_key + "\\n")
+          print("Saved latest Sujas upload state.")
           PY
 
-      - name: Save state
+      - name: Save upload state
         run: |
           if git diff --quiet -- latest_sujas_key.txt; then
-            echo "No new state."
+            echo "No new upload state to save."
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add latest_sujas_key.txt
-            git commit -m "Save latest Sujas state"
+            git commit -m "Save latest Sujas upload state"
             git push
           fi
